@@ -28,3 +28,4 @@ evaluator:
   use_wandb: ${use_wandb}
   inference_mode: sliding
   sliding_inference_batch: 8
+  visualization_interval: 60

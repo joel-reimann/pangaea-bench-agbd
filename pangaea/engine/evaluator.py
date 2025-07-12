@@ -6,6 +6,7 @@ import math
 import numpy as np
 import sklearn.metrics
 import wandb
+from agbd_visualization import log_agbd_regression_visuals
 
 import torch
 import torch.nn.functional as F
@@ -13,6 +14,11 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from pangaea.decoders.knnclassifier import KNNClassifier
 from tqdm import tqdm
+
+# added for visualization when regression
+import random
+import csv
+
 
 
 class Evaluator:
@@ -137,248 +143,6 @@ class Evaluator:
         return merged_pred
 
 
-class LinearClassificationEvaluator(Evaluator):
-    def __init__(
-        self,
-        val_loader,
-        exp_dir: str | Path,
-        device: torch.device,
-        inference_mode: str = "whole",
-        sliding_inference_batch: int = None,
-        use_wandb: bool = False,
-        multi_label: bool = False,   # Flag to indicate multi-label evaluation
-        topk: int = 1,               # For multi-label: if > 1, use top-k selection
-    ) -> None:
-        super().__init__(val_loader, exp_dir, device, inference_mode, sliding_inference_batch, use_wandb)
-        self.multi_label = multi_label
-        self.topk = topk
-        
-    def evaluate(
-        self, 
-        model: torch.nn.Module, 
-        model_name: str, 
-        model_ckpt_path: str | Path | None = None):
-        
-        t = time.time()
-        if model_ckpt_path is not None:
-            model_dict = torch.load(model_ckpt_path, map_location=self.device, weights_only=False)
-            model_name = os.path.basename(model_ckpt_path).split(".")[0]
-            if "model" in model_dict:
-                model.module.load_state_dict(model_dict["model"])
-            else:
-                model.module.load_state_dict(model_dict)
-            self.logger.info(f"Loaded {model_name} for evaluation")
-        
-        model.eval()
-        
-        all_preds = []
-        all_targets = []
-        total_correct = 0
-        total_samples = 0
-        
-        tag = f"Evaluating {model_name} on {self.split} set"
-        for batch_idx, data in enumerate(tqdm(self.val_loader, desc=tag)):
-            image, target = data["image"], data["target"]
-            image = {k: v.to(self.device) for k, v in image.items()}
-            target = target.to(self.device)
-            
-            with torch.no_grad():
-                logits = model(image)
-            
-            if self.multi_label:
-                # Multi-label evaluation:
-                # Option 1: If topk > 1, select top-k indices; otherwise, threshold at 0.5.
-                preds_prob = torch.sigmoid(logits)
-                if self.topk > 1:
-                    topk_indices = preds_prob.topk(self.topk, dim=1).indices  # shape: (B, topk)
-                    preds = torch.zeros_like(preds_prob, dtype=torch.int)
-                    preds.scatter_(1, topk_indices, 1)
-                else:
-                    preds = (preds_prob > 0.5).int()
-
-                all_preds.append(preds.cpu().numpy())
-                all_targets.append(target.cpu().numpy())
-            else:
-                preds = torch.argmax(logits, dim=1)  
-
-                total_correct += (preds == target).sum().item()
-                total_samples += target.numel()
-                all_preds.append(preds.cpu().numpy())
-                all_targets.append(target.cpu().numpy())
-        
-        all_preds = np.concatenate(all_preds, axis=0)
-        all_targets = np.concatenate(all_targets, axis=0)
-        
-        
-        if self.multi_label:
-            # For multi-label, accuracy is computed as the subset accuracy.
-            accuracy = sklearn.metrics.accuracy_score(all_targets, all_preds)
-            precision, recall, f1, _ = sklearn.metrics.precision_recall_fscore_support(
-                all_targets, all_preds, average="micro", zero_division=0)
-        else:
-            # For single-class tasks, overall accuracy is computed.
-            accuracy = total_correct / total_samples if total_samples > 0 else 0
-
-            precision, recall, f1, _ = sklearn.metrics.precision_recall_fscore_support(
-                    all_targets, all_preds,labels=list(range(self.num_classes)), average="macro", zero_division=0)
-        
-        metrics = {
-            "accuracy": accuracy,
-            "precision": precision,
-            "recall": recall,
-            "F1": f1,
-        }
-        
-        self.log_metrics(metrics)
-        used_time = time.time() - t
-        return metrics, used_time
-    
-    def __call__(self, model, model_name, model_ckpt_path=None):
-        return self.evaluate(model, model_name, model_ckpt_path)
-    
-    def compute_metrics(self):
-        pass
-
-    def log_metrics(self, metrics: dict):
-        def format_metric(name, value):
-            header = f"[{self.split}] ------- {name} --------\n"
-            value_str = (
-                f"[{self.split}] -------------------\n"
-                + f"[{self.split}] Mean".ljust(self.max_name_len, " ")
-                + "\t{:>7}".format("%.3f" % value)
-            )
-            return header + value_str
-
-        acc_str = format_metric("Accuracy", metrics["accuracy"])
-        prec_str = format_metric("Precision", metrics["precision"])
-        recall_str = format_metric("Recall", metrics["recall"])
-        f1_str = format_metric("F1-score", metrics["F1"])
-        self.logger.info(acc_str)
-        self.logger.info(prec_str)
-        self.logger.info(recall_str)
-        self.logger.info(f1_str)
-
-        if self.use_wandb and self.rank == 0:
-            wandb.log({
-                f"{self.split}_accuracy": metrics["accuracy"],
-                f"{self.split}_precision": metrics["precision"],
-                f"{self.split}_recall": metrics["recall"],
-                f"{self.split}_f1": metrics["F1"],
-            })
-        
-
-class KNNClassificationEvaluator(Evaluator):
-    """Builds a feature bank from *train_loader* and evaluates on *val_loader*."""
-    def __init__(
-        self,
-        val_loader: DataLoader,
-        exp_dir: str | Path,
-        device: torch.device,
-        inference_mode: str = "whole",
-        sliding_inference_batch: int = None,
-        use_wandb: bool = False,
-        multi_label: bool = False,
-    ) -> None:
-        super().__init__(val_loader, exp_dir, device, use_wandb)
-        self.multi_label = multi_label
-        self.logger = logging.getLogger()
-        # e.g., self.split is set by base Evaluator to "val" or "test"
-
-    def topk_acc(self, pred_rank: Tensor, target: Tensor, k: int) -> float:
-        if self.multi_label:
-            # pred_rank and target are both (B, C) binary
-            pred_np = pred_rank.cpu().numpy()
-            target_np = target.cpu().numpy()
-            return sklearn.metrics.f1_score(
-                target_np, pred_np, average='micro', zero_division=0
-            )
-        else:
-            # single-label: pred_rank is (B, C) sorted class indices
-            return (pred_rank[:, :k] == target.unsqueeze(1)).any(1).float().mean().item()
-
-    def evaluate(
-        self,
-        model: KNNClassifier,
-        train_loader: DataLoader,
-        model_name: str,
-        model_ckpt_path: str | Path | None = None
-    ):
-        t0 = time.time()
-        # Load checkpoint if provided
-        if model_ckpt_path is not None:
-            ckpt = torch.load(model_ckpt_path, map_location=self.device, weights_only=False)
-            model_name = os.path.basename(model_ckpt_path).split(".")[0]
-            state = ckpt.get("model", ckpt)
-            model.module.load_state_dict(state)
-            self.logger.info(f"Loaded {model_name} for evaluation")
-
-        model.eval()
-        if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-            model = model.module
-
-        if model._bank is None or model._bank_labels is None:
-            if train_loader is None:
-                raise ValueError("train_loader is required to build feature bank for k-NN probe")
-            model.build_feature_bank(train_loader, self.device)
-
-        total = 0
-        topk_correct = {k: 0.0 for k in model.topk}
-
-        for batch in tqdm(self.val_loader, desc="kNN-compute", leave=True):
-            image, target = batch["image"], batch["target"]
-            image = {k: v.to(self.device) for k, v in image.items()}
-            target = target.to(self.device)
-
-            # one-hot encode val targets for multi-label
-            if self.multi_label and target.dim() == 1:
-                target = F.one_hot(target, num_classes=model.num_classes).float()
-
-            pred = model.classify(image)
-            bsz = target.size(0)
-            total += bsz
-
-            if self.multi_label:
-                # only compute a single F1 per batch
-                f1 = sklearn.metrics.f1_score(
-                    target.cpu().numpy(),
-                    pred.cpu().numpy(),
-                    average='micro',
-                    zero_division=0
-                )
-                topk_correct[ model.topk[0] ] += f1 * bsz
-            else:
-                for k in model.topk:
-                    acc = self.topk_acc(pred, target, k)
-                    topk_correct[k] += acc * bsz
-
-        # Aggregate metrics
-        if self.multi_label:
-            final_f1 = topk_correct[ model.topk[0] ] / total
-            self.logger.info(f"[{self.split}] F1 Score: {final_f1:.3f}")
-            if self.use_wandb and getattr(self, "rank", 0) == 0:
-                import wandb
-                wandb.log({f"{self.split}_f1": final_f1})
-            metrics = {"f1": final_f1}
-        else:
-            metrics = {f"top{k}": topk_correct[k] / total for k in model.topk}
-            # log single-label metrics
-            top1_str = f"[{self.split}] Top-1 Acc: {metrics['top1']:.3f}"
-            top2_str = f"[{self.split}] Top-2 Acc: {metrics.get('top2', 0):.3f}"
-            self.logger.info(top1_str)
-            self.logger.info(top2_str)
-            if self.use_wandb and getattr(self, "rank", 0) == 0:
-                import wandb
-                wandb.log({
-                    f"{self.split}_top1": metrics['top1'],
-                    f"{self.split}_top2": metrics.get('top2', metrics['top1']),
-                })
-
-        return metrics, time.time() - t0
-
-    def __call__(self, model, model_name, model_ckpt_path=None, train_loader=None):
-        return self.evaluate(model, train_loader, model_name, model_ckpt_path)
-                             
-                             
 class SegEvaluator(Evaluator):
     """
     SegEvaluator is a class for evaluating segmentation models. It extends the Evaluator class and provides methods
@@ -408,8 +172,10 @@ class SegEvaluator(Evaluator):
             inference_mode: str = 'sliding',
             sliding_inference_batch: int = None,
             use_wandb: bool = False,
+            visualization_interval: int = 120,  # new
     ):
         super().__init__(val_loader, exp_dir, device, inference_mode, sliding_inference_batch, use_wandb)
+        self.visualization_interval = visualization_interval
 
     @torch.no_grad()
     def evaluate(self, model, model_name='model', model_ckpt_path=None):
@@ -455,6 +221,39 @@ class SegEvaluator(Evaluator):
                 (pred * self.num_classes + target), minlength=self.num_classes ** 2
             )
             confusion_matrix += count.view(self.num_classes, self.num_classes)
+
+            # ------------------------------ VISUALIZATION ------------------------------
+            # Save some intermediate results (only preds that have valid values only and if wandb is activated)
+            if torch.all(torch.flatten(valid_mask)) and self.use_wandb and self.rank == 0:
+                # Log every visualization_interval batches, or for specific model_name
+                should_log = False
+                if (batch_idx % self.visualization_interval == 0) or (model_name in ["epoch 5", "epoch 10", "epoch 30", "epoch 60", "checkpoint__best"]):
+                    should_log = True
+                if should_log:
+                    pred_saved = pred.clone()
+                    target_saved = target.clone()
+                    pred_np = pred_saved.cpu().numpy()
+                    target_np = target_saved.cpu().numpy()
+                    # Try to infer a square shape, fallback to flat if not possible
+                    dim_2 = int(np.sqrt(len(pred_np)))
+                    if dim_2 * dim_2 == len(pred_np):
+                        img_pred = wandb.Image(pred_np.reshape((dim_2, dim_2)))
+                        img_target = wandb.Image(target_np.reshape((dim_2, dim_2)))
+                    else:
+                        img_pred = wandb.Image(pred_np)
+                        img_target = wandb.Image(target_np)
+                    # Sortable keys
+                    if batch_idx < 10:
+                        wandb.log({f"batch_00{batch_idx}_{model_name}_pred": img_pred})
+                        wandb.log({f"batch_00{batch_idx}_{model_name}_target": img_target})
+                    elif batch_idx < 100:
+                        wandb.log({f"batch_0{batch_idx}_{model_name}_pred": img_pred})
+                        wandb.log({f"batch_0{batch_idx}_{model_name}_target": img_target})
+                    else:
+                        wandb.log({f"batch_{batch_idx}_{model_name}_pred": img_pred})
+                        wandb.log({f"batch_{batch_idx}_{model_name}_target": img_target})
+            # ------------------------------ VISUALIZATION ------------------------------
+
 
         torch.distributed.all_reduce(
             confusion_matrix, op=torch.distributed.ReduceOp.SUM
@@ -511,7 +310,7 @@ class SegEvaluator(Evaluator):
 
     def log_metrics(self, metrics):
         def format_metric(name, values, mean_value):
-            header = f"[{self.split}] ------- {name} --------\n"
+            header = f"------- {name} --------\n"
             metric_str = (
                     "\n".join(
                         c.ljust(self.max_name_len, " ") + "\t{:>7}".format("%.3f" % num)
@@ -520,8 +319,8 @@ class SegEvaluator(Evaluator):
                     + "\n"
             )
             mean_str = (
-                    f"[{self.split}]-------------------\n"
-                    + f"[{self.split}] Mean".ljust(self.max_name_len, " ")
+                    "-------------------\n"
+                    + "Mean".ljust(self.max_name_len, " ")
                     + "\t{:>7}".format("%.3f" % mean_value)
             )
             return header + metric_str + mean_str
@@ -594,15 +393,18 @@ class RegEvaluator(Evaluator):
             inference_mode: str = 'sliding',
             sliding_inference_batch: int = None,
             use_wandb: bool = False,
+            visualization_interval: int = 120,  # new
     ):
         super().__init__(val_loader, exp_dir, device, inference_mode, sliding_inference_batch, use_wandb)
+        self.visualization_interval = visualization_interval
 
     @torch.no_grad()
-    def evaluate(self, model, model_name='model', model_ckpt_path=None):
+    def evaluate(self, model, model_name='model', model_ckpt_path=None, testing_bool=False):
         t = time.time()
+        self.testing_bool=testing_bool
 
         if model_ckpt_path is not None:
-            model_dict = torch.load(model_ckpt_path, map_location=self.device, weights_only=False)
+            model_dict = torch.load(model_ckpt_path, map_location=self.device, weights_only=False)  # added 'weights_only=False'
             model_name = os.path.basename(model_ckpt_path).split('.')[0]
             if 'model' in model_dict:
                 model.module.load_state_dict(model_dict["model"])
@@ -616,6 +418,10 @@ class RegEvaluator(Evaluator):
         tag = f'Evaluating {model_name} on {self.split} set'
 
         mse = torch.zeros(1, device=self.device)
+        mean_absolute_error = torch.zeros(1, device=self.device)
+        mean_error = torch.zeros(1, device=self.device)
+        total_samples = 0  # Track total samples for proper averaging
+
 
         for batch_idx, data in enumerate(tqdm(self.val_loader, desc=tag)):
             image, target = data['image'], data['target']
@@ -630,14 +436,156 @@ class RegEvaluator(Evaluator):
                 logits = model(image, output_shape=target.shape[-2:]).squeeze(dim=1)
             else:
                 raise NotImplementedError((f"Inference mode {self.inference_mode} is not implemented."))
+            
+            # ===================== CHANGED FROM ORIGINAL: IMPLEMENT SPARSE MSE, ADD METRICS AND VISUALIZATION - from here ... =====================
+            
+            # Central pixel logic - works for any image size, ensures central pixel is correctly identified
+            # Handle both odd and even image dimensions properly
+            height, width = logits.shape[-2:]
+            center_h = height // 2
+            center_w = width // 2
+            
+            # For AGBD: ensure we're always using the correct central pixel
+            # If image size is 25x25, center is at (12,12). If 50x50, center is at (25,25), etc.
+            
+            assert logits.shape == target.shape, f"Shape error in evaluator.py: logits.shape = {logits.shape} != target.shape {target.shape}"
 
-            mse += F.mse_loss(logits, target)
+            # Extract central pixel values for current batch
+            central_logits = logits[:, center_h, center_w]  # [batch_size]
+            central_targets = target[:, center_h, center_w]  # [batch_size]
+            
+            # Calculate batch size for proper averaging
+            batch_size = central_logits.shape[0]
+            total_samples += batch_size
 
-        torch.distributed.all_reduce(mse, op=torch.distributed.ReduceOp.SUM)
-        mse = mse / len(self.val_loader)
+            # Calculate metrics for current batch - sum up for later averaging
+            batch_mse = F.mse_loss(central_logits, central_targets, reduction='sum')
+            mse += batch_mse
+
+            # Calculate extra metrics for logging
+            mse_to_print = F.mse_loss(central_logits, central_targets, reduction='mean')
+
+            error_per_sample = (central_logits - central_targets)
+            mean_error += torch.sum(error_per_sample)  # Sum for later averaging
+
+            absolute_error_per_sample = torch.abs(error_per_sample)
+            mean_absolute_error += torch.sum(absolute_error_per_sample)  # Sum for later averaging
+
+            # Define variable, so that metrics are only saved when testing, not when validating
+            if self.testing_bool:
+                path_to_csv = os.path.join(self.exp_dir, f"test_metrics/metrics.csv")
+                with open(path_to_csv, 'a') as file:
+                    writer = csv.writer(file)
+                    for i in range(central_targets.shape[0]):
+                        writer.writerow([batch_idx, i, central_targets[i].item(), central_logits[i].item(), mse_to_print.item()])
+                    file.close()
+
+            # ------------------------------ VISUALIZATION ------------------------------
+            # save predicted values in testing phase, when best model with name "chechpoint__best" is called to evaluate on the test dataset (only when use_wandb=true)
+            if self.use_wandb and self.rank == 0 and ((batch_idx % self.visualization_interval == 0) or (model_name in ["epoch 0", "epoch 10", "checkpoint__best"])):
+                # CLONE PREDICTED AND GROUND TRUTH TENSORS, SO THAT ANY CHANGES DO NOT AFFECT ORIGINAL TENSOR
+                pred_saved = logits.clone()
+                target_saved = target.clone()
+
+                # create index for random image in the batch
+                max_batch_size = logits.shape[0]
+                i = random.randint(0, max_batch_size-1)
+
+                # Use the corrected central pixel coordinates
+                logits_pxl = pred_saved[i, center_h, center_w]
+                target_pxl = target_saved[i, center_h, center_w]
+                
+                pred_saved_masked = torch.zeros((pred_saved[i,:,:].shape))
+                target_saved_masked = torch.zeros((target_saved[i,:,:].shape))
+
+                pred_saved_masked[center_h, center_w] = logits_pxl
+                target_saved_masked[center_h, center_w] = target_pxl
+
+                # Create a 7x7 window around center for visualization (handle edge cases)
+                h_start = max(0, center_h - 3)
+                h_end = min(height, center_h + 4)
+                w_start = max(0, center_w - 3)
+                w_end = min(width, center_w + 4)
+                
+                pred_saved_masked = pred_saved_masked[h_start:h_end, w_start:w_end]
+                target_saved_masked = target_saved_masked[h_start:h_end, w_start:w_end]
+
+                # TRANSFORM TO NUMPY
+                pred_np = pred_saved.cpu().numpy()
+                target_np = target_saved.cpu().numpy()
+                pred_saved_masked_np = pred_saved_masked.cpu().numpy()
+                target_saved_masked_np = target_saved_masked.cpu().numpy()
+                
+                # LOG INTO WANDB AFTER SLICING (TENSOR IS 3D, TAKE ANY IMAGE)
+                img_pred = wandb.Image(pred_np[i,:,:], caption=f"prediction (value: {logits_pxl:.3f})")
+                img_target = wandb.Image(target_np[i,:,:], caption=f"ground truth (value: {target_pxl:.3f})")
+
+                img_pred_masked = wandb.Image(pred_saved_masked_np, caption=f"prediction (masked, zoomed) (value: {logits_pxl:.3f})")
+                img_target_masked = wandb.Image(target_saved_masked_np, caption=f"ground truth (masked, zoomed) (value: {target_pxl:.3f})")
+
+                wandb.log({f"batch_{batch_idx}_{model_name}_#{i}: MSE = {mse_to_print:.3f}": (img_pred, img_target, img_pred_masked, img_target_masked)})
+
+                # Log marker file for test automation
+                try:
+                    marker_path = os.path.join(self.exp_dir, "visualization_done.txt")
+                    with open(marker_path, "a") as marker_file:
+                        marker_file.write(f"Visualization logged for batch {batch_idx}, model {model_name}\n")
+                except Exception as e:
+                    print(f"[WARN] Could not write visualization marker: {e}")
+
+            # ------------------------------ VISUALIZATION ------------------------------
+            
+            # ------------------------------ ADVANCED VISUALIZATION (AGBD) ------------------------------
+            try:
+                # Use new visualization util, pass batch as inputs
+                log_agbd_regression_visuals(
+                    inputs=data if isinstance(data, dict) else {},
+                    pred=logits,
+                    target=target,
+                    band_order=None,  # Let util auto-detect if possible
+                    wandb_run=wandb,
+                    step=batch_idx,
+                    prefix=self.split,
+                    max_samples=3,
+                    dataset=self.val_loader.dataset
+                )
+            except Exception as e:
+                print(f"[WARN] Advanced AGBD visualization failed: {e}")
+            # ------------------------------ ADVANCED VISUALIZATION (AGBD) ------------------------------
+
+
+        # CRITICAL FIX: Multi-GPU reduction for all metrics
+        # Convert total_samples to tensor for reduction
+        total_samples_tensor = torch.tensor(total_samples, device=self.device, dtype=torch.float32)
+        
+        # Only apply distributed reduction if actually running in distributed mode
+        if torch.distributed.is_initialized():
+            # Reduce all metrics across GPUs - use SUM for proper aggregation
+            torch.distributed.all_reduce(mse, op=torch.distributed.ReduceOp.SUM)
+            torch.distributed.all_reduce(mean_absolute_error, op=torch.distributed.ReduceOp.SUM)
+            torch.distributed.all_reduce(mean_error, op=torch.distributed.ReduceOp.SUM)
+            torch.distributed.all_reduce(total_samples_tensor, op=torch.distributed.ReduceOp.SUM)
+            
+            # Convert back to python int
+            total_samples_all_gpus = int(total_samples_tensor.item())
+            
+            # Proper averaging: divide by total number of samples across ALL GPUs
+            # This fixes the "inflated error" bug mentioned in meeting notes
+            mse = mse / total_samples_all_gpus
+            mean_absolute_error = mean_absolute_error / total_samples_all_gpus
+            mean_error = mean_error / total_samples_all_gpus
+        else:
+            # Single GPU case - divide by number of samples on this GPU
+            mse = mse / total_samples
+            mean_absolute_error = mean_absolute_error / total_samples
+            mean_error = mean_error / total_samples
+
+        other_metrics = {"MAE": mean_absolute_error.item(), "ME": mean_error.item()}
 
         metrics = {"MSE": mse.item(), "RMSE": torch.sqrt(mse).item()}
-        self.log_metrics(metrics)
+        self.log_metrics(metrics, other_metrics)
+        # ===================== until here ... - CHANGED FROM ORIGINAL: IMPLEMENT SPARSE MSE, AND VISUALIZATION - from here =====================
+
 
         used_time = time.time() - t
 
@@ -647,11 +595,12 @@ class RegEvaluator(Evaluator):
     def __call__(self, model, model_name='model', model_ckpt_path=None):
         return self.evaluate(model, model_name, model_ckpt_path)
 
-    def log_metrics(self, metrics):
-        header = f"[{self.split}] ------- MSE and RMSE --------\n"
-        mse = f"[{self.split}]-------------------\n" + 'MSE \t{:>7}'.format('%.3f' % metrics['MSE']) + '\n'
-        rmse = f"[{self.split}]-------------------\n" + 'RMSE \t{:>7}'.format('%.3f' % metrics['RMSE'])
+    def log_metrics(self, metrics, other_metrics):
+        header = "------- MSE and RMSE --------\n"
+        mse = "-------------------\n" + 'MSE \t{:>7}'.format('%.3f' % metrics['MSE']) + '\n'
+        rmse = "-------------------\n" + 'RMSE \t{:>7}'.format('%.3f' % metrics['RMSE'])
         self.logger.info(header + mse + rmse)
 
         if self.use_wandb and self.rank == 0:
-            wandb.log({f"{self.split}_MSE": metrics["MSE"], f"{self.split}_RMSE": metrics["RMSE"]})
+            # ADAPTED TO LOG ADDED METRICS, SEE ABOVE
+            wandb.log({f"{self.split}_MSE_(mean_over_test_batches)": metrics["MSE"], f"{self.split}_RMSE_(mean_over_test_batches)": metrics["RMSE"], f"{self.split}_MAE_(mean_over_test_batches)": other_metrics["MAE"], f"{self.split}_ME_(mean_over_test_batches)": other_metrics["ME"]})

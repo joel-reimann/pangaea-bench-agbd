@@ -166,8 +166,15 @@ class SpectralGPT_Encoder(Encoder):
 
     def forward(self, image: dict[str, torch.Tensor]) -> list[torch.Tensor]:
         # input image of shape B C H W
-        x = image["optical"].unsqueeze(-3)  # B C H W -> B C 1 H W
-
+        x = image["optical"]
+        print(f"[SpectralGPT_Encoder] input x.shape: {x.shape}")
+        if x.dim() == 4:
+            x = x.unsqueeze(-3)  # B C H W -> B C 1 H W
+        elif x.dim() == 5:
+            pass  # already B C T H W
+        else:
+            raise ValueError(f"[SpectralGPT_Encoder] Unexpected input shape: {x.shape}")
+        print(f"[SpectralGPT_Encoder] after unsqueeze x.shape: {x.shape}")
         x = x.permute(0, 2, 1, 3, 4)  # for this model: B, T, C, H, W
         x = self.patch_embed(x)
         N, T, L, C = x.shape  # T: number of bands; L: spatial

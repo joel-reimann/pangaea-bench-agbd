@@ -525,6 +525,27 @@ class RegUPerNet(Decoder):
         )
 
         self.model_name = "Reg_UPerNet"
+        self.channels = channels
+        self.num_classes = 1  # regression
+        self.finetune = finetune
+        self.feature_multiplier = feature_multiplier
+
+        if encoder is None:
+            print("[WARNING] RegUPerNet: encoder is None at __init__. Deferring setup.")
+            self.input_layers = []
+            self.input_layers_num = 0
+            self.in_channels = []
+            self.neck = None
+            self.psp_modules = None
+            self.bottleneck = None
+            self.lateral_convs = nn.ModuleList()
+            self.fpn_convs = nn.ModuleList()
+            self.fpn_bottleneck = None
+            self.conv_reg = None
+            self.dropout = None
+            self.align_corners = False
+            return
+
         if not self.finetune:
             for param in self.encoder.parameters():
                 param.requires_grad = False
@@ -551,9 +572,6 @@ class RegUPerNet(Decoder):
         self.neck = Feature2Pyramid(embed_dim=self.in_channels, rescales=rescales)
 
         self.align_corners = False
-
-        self.channels = channels
-        self.num_classes = 1  # regression
 
         # PSP Module
         self.psp_modules = PPM(

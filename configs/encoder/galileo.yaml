@@ -1,0 +1,49 @@
+# GALILEO encoder configuration for PANGAEA-bench
+# Adapted from Galileo: Learning Global and Local Features in Pretrained Remote Sensing Models
+# Source: https://arxiv.org/abs/2502.09356, https://github.com/nasaharvest/galileo
+
+_target_: pangaea.encoders.galileo_encoder.GalileoEncoderWrapper
+encoder_weights: ./pretrained_models/galileo_mock  # Using mock implementation for testing
+download_url: ""  # No download needed for mock implementation
+
+model_name: galileo
+
+# Input configuration
+input_size: 64  # GALILEO works with flexible patch sizes, start with smaller size
+patch_size: 4   # Base patch size for GALILEO
+embed_dim: 128  # GALILEO's embedding dimension
+output_dim: 128 # Same as embed_dim
+
+# GALILEO specific parameters
+month: 6        # Month for temporal encoding (1-12), using June as default
+do_pool: False  # Keep spatial dimensions for segmentation tasks
+add_layernorm_on_exit: True
+
+# Band configuration - GALILEO expects S1, S2 and other bands
+input_bands:
+  optical:  # S2 bands supported by GALILEO
+    - B2    # Blue
+    - B3    # Green  
+    - B4    # Red
+    - B5    # Red Edge 1
+    - B6    # Red Edge 2
+    - B7    # Red Edge 3
+    - B8    # NIR
+    - B8A   # Red Edge 4
+    - B11   # SWIR 1
+    - B12   # SWIR 2
+  sar:      # S1 bands supported by GALILEO
+    - VV    # VV polarization
+    - VH    # VH polarization
+
+# Output layers (for compatibility with PANGAEA decoders)
+# GALILEO doesn't have traditional layer outputs, so we provide the same output multiple times
+output_layers:
+  - 0   # Linear projection output
+  - 1   # After first transformer block  
+  - 2   # Final output (same as 1 for GALILEO)
+  - 2   # Repeated for compatibility
+
+# Multi-temporal settings
+multi_temporal: False           # GALILEO handles temporal data internally
+multi_temporal_output: False    # Output doesn't have temporal dimension for downstream tasks

@@ -1,0 +1,36 @@
+# AGBD Regression Preprocessing with PADDING Strategy (instead of resizing)
+# Implements meeting decision: "Pad with zeros instead of resizing to maintain 1 pixel = 10-16 meters resolution"
+# Avoids checkerboard patterns from decoder and preserves spatial resolution
+
+train:
+  _target_: pangaea.engine.data_preprocessor.Preprocessor
+  preprocessor_cfg:
+    # Use padding strategy instead of resizing - CRITICAL for maintaining pixel resolution
+    - _target_: pangaea.engine.data_preprocessor.RandomCropToEncoder
+      pad_if_needed: true  # Enable padding when image smaller than required
+    - _target_: pangaea.engine.data_preprocessor.BandFilter
+    - _target_: pangaea.engine.data_preprocessor.NormalizeMinMax
+    - _target_: pangaea.engine.data_preprocessor.BandPadding
+      fill_value: 0.0  # Pad with zeros as specified in meeting
+
+val:
+  _target_: pangaea.engine.data_preprocessor.Preprocessor
+  preprocessor_cfg:
+    # Use center crop with padding for validation - maintains central pixel focus
+    - _target_: pangaea.engine.data_preprocessor.FocusRandomCropToEncoder
+      pad_if_needed: true  # Enable padding
+    - _target_: pangaea.engine.data_preprocessor.BandFilter  
+    - _target_: pangaea.engine.data_preprocessor.NormalizeMinMax
+    - _target_: pangaea.engine.data_preprocessor.BandPadding
+      fill_value: 0.0  # Pad with zeros
+
+test:
+  _target_: pangaea.engine.data_preprocessor.Preprocessor
+  preprocessor_cfg:
+    # Same as validation for consistent evaluation
+    - _target_: pangaea.engine.data_preprocessor.FocusRandomCropToEncoder
+      pad_if_needed: true
+    - _target_: pangaea.engine.data_preprocessor.BandFilter
+    - _target_: pangaea.engine.data_preprocessor.NormalizeMinMax
+    - _target_: pangaea.engine.data_preprocessor.BandPadding
+      fill_value: 0.0

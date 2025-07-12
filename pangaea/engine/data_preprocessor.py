@@ -466,9 +466,12 @@ class RandomCrop(BasePreprocessor):
                 padded_img[:, :, pad_img[0] : -pad_img[0], pad_img[1] : -pad_img[1]] = v
                 data["image"][k] = padded_img
 
+            # Use correct padding tuple for TF.pad: (left, top, right, bottom)
+            padding = (pad_img[1], pad_img[0], pad_img[1], pad_img[0])
+            # print(f"[DEBUG] check_pad: using padding={padding} for TF.pad on target")
             data["target"] = TF.pad(
                 data["target"],
-                padding=padded_img,
+                padding=padding,
                 fill=self.ignore_index,
                 padding_mode="constant",
             )

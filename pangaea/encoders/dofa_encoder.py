@@ -193,6 +193,19 @@ class DOFA_Encoder(Encoder):
         use_norm=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
     ):
+        # Patch: Map AGBD SAR bands to DOFA-expected keys if needed
+        if 'sar' in wave_list:
+            # Map HH/HV to VV/VH if needed
+            if 'HH' in input_bands.get('sar', []) and 'HH' not in wave_list['sar'] and 'VV' in wave_list['sar']:
+                wave_list['sar']['HH'] = wave_list['sar']['VV']
+            if 'HV' in input_bands.get('sar', []) and 'HV' not in wave_list['sar'] and 'VH' in wave_list['sar']:
+                wave_list['sar']['HV'] = wave_list['sar']['VH']
+            # Map VV/VH to HH/HV if needed (for robustness)
+            if 'VV' in input_bands.get('sar', []) and 'VV' not in wave_list['sar'] and 'HH' in wave_list['sar']:
+                wave_list['sar']['VV'] = wave_list['sar']['HH']
+            if 'VH' in input_bands.get('sar', []) and 'VH' not in wave_list['sar'] and 'HV' in wave_list['sar']:
+                wave_list['sar']['VH'] = wave_list['sar']['HV']
+
         super().__init__(
             model_name="dofa_encoder",
             encoder_weights=encoder_weights,

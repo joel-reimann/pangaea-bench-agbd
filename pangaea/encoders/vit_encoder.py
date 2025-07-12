@@ -195,21 +195,28 @@ class VIT_EncoderMT(Encoder):
         )
         self.norm = norm_layer(embed_dim)
 
-        self.time_merging = DoubleConv(
-            in_ch=self.in_channels * self.multi_temporal, out_ch=self.in_channels
-        )
+        # Patch: handle AGBD (single time) gracefully
+        if multi_temporal and multi_temporal > 1:
+            self.time_merging = DoubleConv(
+                in_ch=self.in_channels * multi_temporal, out_ch=self.in_channels
+            )
+        else:
+            self.time_merging = nn.Identity()
 
     def forward(self, images):
         x = images["optical"]
         b, c, t, h, w = x.shape
-        # merge time and channels dimension
-        x = x.reshape(b, c * t, h, w)
+        # Patch: handle single time (t=1) gracefully
+        if t == 1:
+            x = x.reshape(b, c, h, w)
+        else:
+            x = x.reshape(b, c * t, h, w)
         x = self.time_merging(x)
         x = self.patch_embed(x)
 
         cls_tokens = self.cls_token.expand(
             x.shape[0], -1, -1
-        )  # stole cls_tokens impl from Phil Wang, thanks
+        )
         x = torch.cat((cls_tokens, x), dim=1)
         x = x + self.pos_embed
 

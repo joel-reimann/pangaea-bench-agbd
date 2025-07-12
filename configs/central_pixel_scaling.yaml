@@ -1,0 +1,35 @@
+# Central Pixel Scaling Configuration
+# Implements meeting decision on central pixel scaling rule:
+# - 25x25 image → 1x1 central pixel
+# - 50x50 image → 2x2 central pixel  
+# - 250x250 image → 10x10 central pixel
+
+# Configuration flag for padding vs resizing strategies
+use_padding_strategy: true  # Set to false to use resizing (old behavior)
+
+# Central pixel scaling rule parameters
+central_pixel_scaling:
+  enabled: true
+  # Scaling rule: central_pixel_size = image_size / 25 (since 25x25 → 1x1)
+  base_image_size: 25
+  base_central_size: 1
+  
+# Image processing strategy configuration
+image_processing:
+  strategy: "padding"  # Options: "padding", "resizing"
+  padding_value: 0.0   # Value to use for padding (zeros as decided in meeting)
+  maintain_resolution: true  # Maintain 1 pixel = 10-16 meters
+  
+# Visualization configuration
+visualization:
+  plot_before_decoder: true  # Plot images before decoder resizing to avoid checkerboard patterns
+  save_training_images: true
+  save_validation_images: true  
+  save_test_images: true
+
+# Patch-based strategy configuration
+patch_strategy:
+  enabled: true
+  patch_size: [25, 25]  # Standard AGBD patch size
+  keep_real_data_only: true  # Discard patches with only zeros
+  central_pixel_must_be_center: true  # Ensure central pixel remains in center for loss function

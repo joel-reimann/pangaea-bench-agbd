@@ -57,7 +57,6 @@ class UNet(Encoder):
         self.encoder = UNet_Encoder(self.topology)
 
     def forward(self, image):
-        
         if "optical" in image and "sar" in image:
             # Concatenate optical and sar bands
             x = torch.cat([image["optical"].squeeze(2), image["sar"].squeeze(2)], dim=1)
@@ -67,9 +66,14 @@ class UNet(Encoder):
             x = image["sar"].squeeze(2)
         else:
             raise ValueError("No valid bands found in the image")
-        
         feat = self.in_conv(x)
         output = self.encoder(feat)
+        # Patch: always return a list of features for decoder compatibility
+        if output is None:
+            output = [feat]
+        elif not isinstance(output, list):
+            output = [output]
+        print(f"[UNet] output type: {type(output)}, length: {len(output)}")
         return output
 
     def load_encoder_weights(self, logger: Logger) -> None:
@@ -148,6 +152,12 @@ class UNetMT(Encoder):
 
         feat = self.in_conv(x)
         output = self.encoder(feat)
+        # Patch: always return a list of features for decoder compatibility
+        if output is None:
+            output = [feat]
+        elif not isinstance(output, list):
+            output = [output]
+        print(f"[UNetMT] output type: {type(output)}, length: {len(output)}")
         return output
 
     def load_encoder_weights(self, logger: Logger) -> None:

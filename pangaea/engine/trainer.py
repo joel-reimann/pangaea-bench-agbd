@@ -86,6 +86,8 @@ class Trainer:
         ], f"Invalid precision {precision}, use 'fp32', 'fp16' or 'bfp16'."
         self.enable_mixed_precision = precision != "fp32"
         self.precision = torch.float16 if (precision == "fp16") else torch.bfloat16
+
+        # define GradScaler to scale gradients, avoid gradients "underflow"
         # self.scaler = torch.GradScaler("cuda", enabled=self.enable_mixed_precision)
         self.scaler = torch.cuda.amp.GradScaler("cuda", enabled=self.enable_mixed_precision)
 
@@ -104,22 +106,32 @@ class Trainer:
             if epoch % self.eval_interval == 0:
                 metrics, used_time = self.evaluator(self.model, f"epoch {epoch}")
                 self.training_stats["eval_time"].update(used_time)
+
+                # save BEST model checkpoint after self.eval_interval, default 5, within an epoch
                 self.save_best_checkpoint(metrics, epoch)
 
             self.logger.info("============ Starting epoch %i ... ============" % epoch)
-            # set sampler
+            
+            # set sampler so that shuffling works, see https://docs.pytorch.org/docs/stable/data.html
             self.t = time.time()
             self.train_loader.sampler.set_epoch(epoch)
+
+            # train one epoch, separate function. see below
             self.train_one_epoch(epoch)
+
+            # save model checkpoint after self.ckpt_interval, default 20
             if epoch % self.ckpt_interval == 0 and epoch != self.start_epoch:
                 self.save_model(epoch)
 
-        metrics, used_time = self.evaluator(self.model, "final model")
-        self.training_stats["eval_time"].update(used_time)
-        self.save_best_checkpoint(metrics, self.n_epochs)
-
-        # save last model
-        self.save_model(self.n_epochs, is_final=True)
+        # Only do final evaluation if not in debug mode or n_epochs > 1
+        debug_mode = getattr(self.train_loader.dataset, 'debug', False)
+        if not (self.n_epochs == 1 and debug_mode):
+            metrics, used_time = self.evaluator(self.model, "final model")
+            self.training_stats["eval_time"].update(used_time)
+            # save BEST model checkpoint after self.eval_interval, default 5, after finishing training
+            self.save_best_checkpoint(metrics, self.n_epochs)
+            # save last model
+            self.save_model(self.n_epochs, is_final=True)
 
     def train_one_epoch(self, epoch: int) -> None:
         """Train model for one epoch.
@@ -130,45 +142,59 @@ class Trainer:
         self.model.train()
 
         end_time = time.time()
+
+        # for the called epoch iterate through all batches and:
+        #   1) retrieve image and target data
+        #   2) compute logits (here, model = decoder, which contains the encoder)
+        #   3) calculate mse = loss with target and logits (changed from original since sparse mse)
+        #   4) Reset gradients with self.optimizer.zero_grad()
+        #   5) Assert that calculated loss != nan
+        #   6) Scale loss, unscale gradients, call optimizer, update scaler for next iteration, see https://docs.pytorch.org/docs/stable/notes/amp_examples.html#typical-mixed-precision-training
+        #   7) update statistics, log information into logger and WandB, decay lr
+
         for batch_idx, data in enumerate(self.train_loader):
+            #)1
             image, target = data["image"], data["target"]
             image = {modality: value.to(self.device) for modality, value in image.items()}
             target = target.to(self.device)
 
             self.training_stats["data_time"].update(time.time() - end_time)
-
+            # 2) & 3)
             with torch.autocast(
                 "cuda", enabled=self.enable_mixed_precision, dtype=self.precision
             ):
                 logits = self.model(image, output_shape=target.shape[-2:])
                 loss = self.compute_loss(logits, target)
-
+            # 4)
             self.optimizer.zero_grad()
-
+            
+            # 5)
             if not torch.isfinite(loss):
                 raise FloatingPointError(
                     f"Rank {self.rank} got infinite/NaN loss at batch {batch_idx} of epoch {epoch}!"
                 )
-
+            # 6)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
+            
+            # 7)
             self.training_stats['loss'].update(loss.item())
             with torch.no_grad():
                 self.compute_logging_metrics(logits, target)
             if (batch_idx + 1) % self.log_interval == 0:
                 self.log(batch_idx + 1, epoch)
 
+            # decay lr
             self.lr_scheduler.step()
-
             if self.use_wandb and self.rank == 0:
                 self.wandb.log(
                     {
-                        "train_loss": loss.item(),
-                        "learning_rate": self.optimizer.param_groups[0]["lr"],
+                        "Train_MSE_(Loss_per_epoch_per_batch)": loss.item(),                        # CHANGED: SPECIFY WHAT IS LOGGED
+                        "learning_rate_per_batch": self.optimizer.param_groups[0]["lr"],
                         "epoch": epoch,
                         **{
-                            f"train_{k}": v.avg
+                            f"Train_{k}_(running_average)": v.avg                                   # CHANGED: SPECIFY WHAT IS LOGGED
                             for k, v in self.training_metrics.items()
                         },
                     },
@@ -230,7 +256,7 @@ class Trainer:
         Args:
             resume_path (str | pathlib.Path): path to the checkpoint.
         """
-        model_dict = torch.load(resume_path, map_location=self.device, weights_only=False)
+        model_dict = torch.load(resume_path, map_location=self.device)
         if "model" in model_dict:
             self.model.module.load_state_dict(model_dict["model"])
             self.optimizer.load_state_dict(model_dict["optimizer"])
@@ -354,184 +380,6 @@ class Trainer:
             v.reset()
 
 
-class LinearClassificationTrainer(Trainer):
-    def __init__(
-        self,
-        model: nn.Module,
-        train_loader: DataLoader,
-        criterion: nn.Module,
-        optimizer: Optimizer,
-        lr_scheduler: LRScheduler,
-        evaluator: torch.nn.Module,
-        n_epochs: int,
-        exp_dir: pathlib.Path | str,
-        device: torch.device,
-        precision: str,
-        use_wandb: bool,
-        ckpt_interval: int,
-        eval_interval: int,
-        log_interval: int,
-        best_metric_key: str,
-        multi_label: bool = False,  # <-- Flag for multi-label classification, e.g., BigEarthNet dataset
-        topk: int = 1,  # Top-k predictions to use in multi-label scenario
-    ):
-        """Initialize the Trainer for Classification task.
-
-        Args:
-            model (nn.Module): model to train (encoder + decoder).
-            train_loader (DataLoader): train data loader.
-            criterion (nn.Module): criterion to compute the loss.
-            optimizer (Optimizer): optimizer to update the model's parameters.
-            lr_scheduler (LRScheduler): lr scheduler to update the learning rate.
-            evaluator (torch.nn.Module): task evaluator to evaluate the model.
-            n_epochs (int): number of epochs to train the model.
-            exp_dir (pathlib.Path | str): path to the experiment directory.
-            device (torch.device): model
-            precision (str): precision to train the model (fp32, fp16, bfp16).
-            use_wandb (bool): whether to use wandb for logging.
-            ckpt_interval (int): interval to save the checkpoint.
-            eval_interval (int): interval to evaluate the model.
-            log_interval (int): interval to log the training information.
-            best_metric_key (str): metric that determines best checkpoints.
-            multi_label (bool): Flag to enable multi-label classification.
-        """
-        super().__init__(
-            model=model,
-            train_loader=train_loader,
-            criterion=criterion,
-            optimizer=optimizer,
-            lr_scheduler=lr_scheduler,
-            evaluator=evaluator,
-            n_epochs=n_epochs,
-            exp_dir=exp_dir,
-            device=device,
-            precision=precision,
-            use_wandb=use_wandb,
-            ckpt_interval=ckpt_interval,
-            eval_interval=eval_interval,
-            log_interval=log_interval,
-            best_metric_key=best_metric_key,
-        )
-        
-        self.multi_label = multi_label
-        self.topk = topk
-
-        self.training_metrics = {
-            name: RunningAverageMeter(length=100) for name in ["accuracy", "F1"]
-        }
-        self.best_metric = float("-inf")
-        self.best_metric_comp = operator.gt
-
-    def compute_loss(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-
-        return self.criterion(logits, target)
-
-    def compute_logging_metrics(
-        self, logits: torch.Tensor, targets: torch.Tensor
-    ) -> None:
-        """Compute logging metrics.
-        For multi-label:
-        - Uses sigmoid activation and top-k selection.
-        For single-class:
-        - Uses argmax and converts predictions to one-hot encoding.
-
-        Args:
-            logits (torch.Tensor): logits from the decoder.
-            target (torch.Tensor): target tensor.
-        """
-        if self.multi_label:
-            preds_prob = torch.sigmoid(logits)
-            topk_indices = preds_prob.topk(self.topk, dim=1).indices  
-            preds = torch.zeros_like(preds_prob, dtype=torch.bool)
-            preds.scatter_(1, topk_indices, 1)
-        else:
-            preds = torch.argmax(logits, dim=1)
-            
-            one_hot_preds = torch.zeros(
-                size=(preds.size(0), self.num_classes),
-                device=preds.device,
-                dtype=torch.bool
-            )
-            one_hot_preds.scatter_(1, preds.unsqueeze(1), 1)
-            preds = one_hot_preds
-            # Convert targets to one-hot.
-            one_hot_targets = torch.zeros_like(preds)
-            one_hot_targets.scatter_(1, targets.unsqueeze(1), 1)
-            targets = one_hot_targets
-        
-        # Micro-average: aggregate across all classes.
-        preds = preds.bool()
-        targets = targets.bool()
-        TP = (preds & targets).sum().float()
-        FP = (preds & ~targets).sum().float()
-        FN = (~preds & targets).sum().float()
-        TN = (~preds & ~targets).sum().float()
-        
-        acc = (TP + TN) / (TP + TN + FP + FN + 1e-8) 
-        precision = TP / (TP + FP + 1e-8) 
-        recall = TP / (TP + FN + 1e-8)  
-        f1 = 2 * precision * recall / (precision + recall + 1e-8)
-
-        self.training_metrics["accuracy"].update(acc.item())
-        self.training_metrics["F1"].update(f1.item())
-    
-
-class KNNTrainer(Trainer):
-    """A zero-learning shell so run.py can stay unchanged."""
-    
-    def __init__(
-        self,
-        model: nn.Module,              # should be KNNClassifier
-        train_loader: DataLoader,
-        evaluator,
-        lr_scheduler,
-        optimizer,
-        criterion,
-        exp_dir: pathlib.Path | str,
-        device: torch.device,
-        n_epochs: int,
-        precision: str,
-        use_wandb: bool,
-    ):
-        dummy_opt   = torch.optim.SGD([torch.empty(0, device=device, requires_grad=True)], lr=1)
-        dummy_sched = torch.optim.lr_scheduler.LambdaLR(dummy_opt, lambda _: 1)
-
-        super().__init__(
-            model=model,
-            train_loader=train_loader,
-            criterion=nn.Identity(),       # never used
-            optimizer=dummy_opt,
-            lr_scheduler=dummy_sched,
-            evaluator=evaluator,
-            n_epochs=n_epochs,
-            exp_dir=exp_dir,
-            device=device,
-            precision=precision,
-            use_wandb=use_wandb,
-            ckpt_interval=999,
-            eval_interval=1,
-            log_interval=999,
-            best_metric_key="top1",
-        )
-        self.logger: logging.Logger = logging.getLogger()
-        self.train_loader = train_loader
-    # ------------------------------------------------------------------ #
-    def train(self):
-        self.logger.info("=========== k-NN evaluation only ===========")
-        self.evaluator(self.model, model_name="probe", train_loader=self.train_loader)
-        self.logger.info("============================================")
-        dummy_path1 = os.path.join(self.exp_dir, "checkpoint_dummy_best.pth")
-        dummy_path2 = os.path.join(self.exp_dir, "checkpoint_dummy_final.pth")
-        if self.rank == 0 and not os.path.exists(dummy_path1):
-            torch.save({"knn_probe": True}, dummy_path1)
-        if self.rank == 0 and not os.path.exists(dummy_path2):
-            torch.save({"knn_probe": True}, dummy_path2)
-
-    # never called
-    def compute_loss(self, logits, target): ...
-    def compute_logging_metrics(self, logits, target): ...
-
-                       
 class SegTrainer(Trainer):
     def __init__(
         self,
@@ -729,7 +577,15 @@ class RegTrainer(Trainer):
         Returns:
             torch.Tensor: loss value.
         """
-        return self.criterion(logits.squeeze(dim=1), target)
+        # for sparse mse, get central pixel assuming image height = image width and no rescaling
+        pxl = int(logits.shape[-1]/2)
+        
+        assert logits.squeeze(dim=1).shape == target.shape, f"Shape error in evaluator.py: logits.shape (squeezed) = {logits.squeeze(dim=1).shape} != target.shape {target.shape}"
+
+        # original code:
+        #return self.criterion(logits.squeeze(dim=1), target)
+
+        return self.criterion(logits.squeeze(dim=1)[:,pxl,pxl], target[:,pxl,pxl])
 
     @torch.no_grad()
     def compute_logging_metrics(
@@ -741,7 +597,14 @@ class RegTrainer(Trainer):
             logits (torch.Tensor): logits from the decoder.
             target (torch.Tensor): target tensor.
         """
+        # for sparse mse, get central pixel assuming image height = image width and no rescaling
+        pxl = int(logits.shape[-1]/2)
 
-        mse = F.mse_loss(logits.squeeze(dim=1), target)  
+        # NOTE: Training metrics are local per-GPU and automatically averaged by DDP
+        # No multi-GPU reduction bug here (unlike evaluator which needed fixes)
+        # original code:
+        #mse = F.mse_loss(logits.squeeze(dim=1), target)
+
+        mse = F.mse_loss(logits.squeeze(dim=1)[:,pxl,pxl], target[:,pxl,pxl])
         self.training_metrics["MSE"].update(mse.item())
 

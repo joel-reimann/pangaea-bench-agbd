@@ -25,6 +25,9 @@ class AverageMeter(object):
 
 class RunningAverageMeter(object):
     def __init__(self, length=100):
+        if length < 1:
+            print("[RunningAverageMeter] WARNING: length < 1, setting to 1 for debug run.")
+            length = 1
         self.queue = []
         self.ptr = 0
         self.length = length
@@ -36,7 +39,7 @@ class RunningAverageMeter(object):
 
     def reset(self):
         self.queue = []
-        self.ptr = 0
+        self.ptr = 0  # Ensure pointer is reset
         self.val = 0
         self.avg = 0
         self.sum = 0
@@ -46,7 +49,10 @@ class RunningAverageMeter(object):
         if len(self.queue) < self.length:
             self.queue.append(val)
         else:
-            self.queue[self.ptr] = val
+            if self.ptr >= len(self.queue):
+                self.queue.append(val)
+            else:
+                self.queue[self.ptr] = val
             self.ptr = (self.ptr + 1) % self.length
 
         self.val = val
