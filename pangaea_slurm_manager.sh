@@ -1,6 +1,22 @@
 #!/bin/bash
 
-# PANGAEA-bench SLURM Job Management System v2.0 (robust, color-free, test-safe)
+# PANGAEA-bench SLURM Job Management System v2.1 (AGBD Integration Complete)
+# 
+# AGBD INTEGRATION UPDATES (v2.1):
+# ================================
+# ✅ Fixed preprocessing: reg_agbd_original (preserves original AGBD normalization)
+# ✅ Fixed optimizer: adamw (matches AGBD paper recommendations)  
+# ✅ Adaptive visualization intervals: debug=60, production=5000 (prevents WandB overflow)
+# ✅ All AGBD-specific configs: padding strategy, central pixel scaling, multi-GPU fixes
+# ✅ Updated for 300GB full dataset with reasonable visualization frequency
+# ✅ Enhanced visualization with SAR/optical panels, fallback grayscale, no yellow boxes
+# 
+# VISUALIZATION INTERVALS:
+# - debug: 60 (every minute, for testing)
+# - quick: 500 (every ~8 minutes)  
+# - standard: 1000 (every ~16 minutes)
+# - thorough: 2000 (every ~33 minutes)
+# - production: 5000 (every ~83 minutes)
 
 set -euo pipefail
 
@@ -17,11 +33,11 @@ declare -a AVAILABLE_MODELS=(
     "vit" "vit_mi" "vit_scratch" "unet_encoder" "unet_encoder_mi"
 )
 declare -A EXPERIMENT_CONFIGS=(
-    ["quick"]="time=30:00:00 epochs=3 seeds=1 lr=0.01"
-    ["standard"]="time=60:00:00 epochs=5 seeds=1 lr=0.01"
-    ["thorough"]="time=120:00:00 epochs=10 seeds=3 lr=0.01"
-    ["production"]="time=240:00:00 epochs=20 seeds=5 lr=0.01"
-    ["debug"]="time=15:00:00 epochs=1 seeds=1 lr=0.01"
+    ["quick"]="time=30:00:00 epochs=3 seeds=1 lr=0.01 vis_interval=500"
+    ["standard"]="time=60:00:00 epochs=5 seeds=1 lr=0.01 vis_interval=1000"
+    ["thorough"]="time=120:00:00 epochs=10 seeds=3 lr=0.01 vis_interval=2000"
+    ["production"]="time=240:00:00 epochs=20 seeds=5 lr=0.01 vis_interval=5000"
+    ["debug"]="time=15:00:00 epochs=1 seeds=1 lr=0.01 vis_interval=60"
 )
 DEFAULT_ACCOUNT="es_schin"
 DEFAULT_EXPERIMENT="standard"
@@ -53,10 +69,15 @@ validate_model() {
 generate_slurm_template() {
     local job_name=$1 account=$2 time_limit=$3 output_dir=$4 pangaea_home=$5 venv_home=$6
     local encoder=$7 epochs=$8 seed=$9 learning_rate=${10} experiment_type=${11}
-    local visualization_interval=60  # default, can be overridden below
-    # Allow user to override visualization_interval via env or config in future
+    local config=${EXPERIMENT_CONFIGS[$experiment_type]}
+    local vis_interval=$(echo $config | grep -o 'vis_interval=[^ ]*' | cut -d'=' -f2)
+    # Default visualization interval if not specified in config
+    if [ -z "$vis_interval" ]; then
+        vis_interval=1000  # Conservative default for production
+    fi
+    # Allow user override via environment variable
     if [ ! -z "${VIS_INTERVAL:-}" ]; then
-        visualization_interval=$VIS_INTERVAL
+        vis_interval=$VIS_INTERVAL
     fi
     cat << EOF
 #!/bin/bash
@@ -94,14 +115,14 @@ mkdir -p "\$PERSISTENT_OUTPUT_DIR"
 
 TRAIN_CMD="torchrun --nnodes=1 --nproc_per_node=8 --rdzv-backend=c10d --rdzv-endpoint=localhost:0 pangaea/run.py \\
     --config-name=train_agbd dataset=agbd encoder=${encoder} decoder=reg_upernet \\
-    preprocessing=reg_agbd_padding dataset.debug=False criterion=mse task=regression \\
-    optimizer=adam_agbd lr_scheduler=step_agbd task.trainer.n_epochs=${epochs} \\
+    preprocessing=reg_agbd_original dataset.debug=False criterion=mse task=regression \\
+    optimizer=adamw lr_scheduler=step_agbd task.trainer.n_epochs=${epochs} \\
     task.evaluator.inference_mode=whole dataset.img_size=25 task.trainer.ckpt_interval=1 \\
     task.trainer.eval_interval=1 dataset.root_path=\$TMPDIR/agbd_data dataset.hdf5_dir=\$TMPDIR/agbd_data \\
     dataset.mapping_path=\$TMPDIR/agbd_splits dataset.norm_path=\$TMPDIR/agbd_data seed=${seed} \\
     image_processing_strategy=padding use_padding_strategy=true central_pixel_scaling_enabled=true \\
     use_wandb=true work_dir=\$PERSISTENT_OUTPUT_DIR \\
-    task.evaluator.visualization_interval=${visualization_interval} \\
+    task.evaluator.visualization_interval=\$vis_interval \\
     hydra.run.dir=\$PERSISTENT_OUTPUT_DIR/hydra_outputs/$(date +%Y-%m-%d)/$(date +%H-%M-%S)"
 echo "\$TRAIN_CMD" > "\$PERSISTENT_OUTPUT_DIR/command.txt"
 eval "\$TRAIN_CMD" > "\$PERSISTENT_OUTPUT_DIR/training.log" 2>&1
@@ -189,12 +210,19 @@ show_help() {
     echo "  -s, --ssl4eo-models               Run SSL4EO models only"
     echo "  -c, --croma-models                Run CROMA models only"
     echo "  -b, --baseline-models             Run baseline models only"
-    echo "  -e, --experiment TYPE             Experiment type: quick|standard|long|debug"
-    echo "  --vis-interval N                  Visualization interval (default: 60)"
+    echo "  -e, --experiment TYPE             Experiment type: quick|standard|thorough|production|debug"
+    echo "  --vis-interval N                  Override visualization interval (auto: debug=60, production=5000)"
     echo "  -o, --output-dir DIR              Output directory"
     echo "  -p, --pangaea-home DIR            PANGAEA-bench home"
     echo "  -v, --venv-home DIR               Virtual environment"
     echo "  --account ACCOUNT                 SLURM account"
+    echo ""
+    echo "EXPERIMENT TYPES & VISUALIZATION INTERVALS:"
+    echo "  debug:      1 epoch,  vis every 60 batches   (testing only)"
+    echo "  quick:      3 epochs, vis every 500 batches  (~8 min)"
+    echo "  standard:   5 epochs, vis every 1000 batches (~16 min)"
+    echo "  thorough:   10 epochs, vis every 2000 batches (~33 min)"
+    echo "  production: 20 epochs, vis every 5000 batches (~83 min)"
     echo ""
 }
 

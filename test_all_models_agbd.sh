@@ -36,6 +36,7 @@ mkdir -p "$LOG_DIR"
 
 # Patch for DOFA: Map AGBD SAR bands to DOFA-expected keys for wave_list
 # (DOFA expects 'VV' and 'VH', but AGBD uses 'HH' and 'HV')
+# CRITICAL: Using reg_agbd_original preprocessing to match original AGBD normalization
 DOFA_WAVE_PATCH=''
 if [[ " ${MODELS[@]} " =~ "dofa" ]]; then
   # If running dofa, patch config to map HH->VV and HV->VH for wave_list
@@ -53,12 +54,12 @@ for ENCODER in "${MODELS[@]}"; do
     dataset=agbd \
     encoder=$ENCODER \
     decoder=reg_upernet \
-    preprocessing=reg_agbd_padding \
+    preprocessing=reg_agbd_original \
     dataset.debug=True \
     criterion=mse \
     task=regression \
     optimizer=adamw \
-    task.trainer.n_epochs=1 \
+    task.trainer.n_epochs=10 \
     task.evaluator.inference_mode=whole \
     dataset.img_size=25 \
     task.trainer.ckpt_interval=1 \

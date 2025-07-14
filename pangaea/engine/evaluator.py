@@ -424,29 +424,51 @@ class RegEvaluator(Evaluator):
 
 
         for batch_idx, data in enumerate(tqdm(self.val_loader, desc=tag)):
+            # CRITICAL DEBUG: Track data through evaluation pipeline
+            print(f"\n[EVALUATOR DEBUG] Batch {batch_idx}")
+            print(f"[EVALUATOR DEBUG] Data keys: {list(data.keys())}")
+            
+            if 'image' in data:
+                print(f"[EVALUATOR DEBUG] Image modalities: {list(data['image'].keys())}")
+                for mod, tensor in data['image'].items():
+                    print(f"[EVALUATOR DEBUG] {mod} input shape: {tensor.shape}")
+                    print(f"[EVALUATOR DEBUG] {mod} input range: [{tensor.min().item():.6f}, {tensor.max().item():.6f}]")
+            
+            if 'target' in data:
+                print(f"[EVALUATOR DEBUG] Target input shape: {data['target'].shape}")
+                print(f"[EVALUATOR DEBUG] Target input range: [{data['target'].min().item():.6f}, {data['target'].max().item():.6f}]")
+                print(f"[EVALUATOR DEBUG] Target unique values (first 10): {torch.unique(data['target'])[:10]}")
+            
             image, target = data['image'], data['target']
             image = {k: v.to(self.device) for k, v in image.items()}
             target = target.to(self.device)
 
             if self.inference_mode == "sliding":
                 input_size = model.module.encoder.input_size
+                print(f"[EVALUATOR DEBUG] Using sliding inference with input_size: {input_size}")
                 logits = self.sliding_inference(model, image, input_size, output_shape=target.shape[-2:],
                                                 max_batch=self.sliding_inference_batch).squeeze(dim=1)
             elif self.inference_mode == "whole":
+                print(f"[EVALUATOR DEBUG] Using whole image inference")
                 logits = model(image, output_shape=target.shape[-2:]).squeeze(dim=1)
             else:
                 raise NotImplementedError((f"Inference mode {self.inference_mode} is not implemented."))
             
+            print(f"[EVALUATOR DEBUG] Model output (logits) shape: {logits.shape}")
+            print(f"[EVALUATOR DEBUG] Model output range: [{logits.min().item():.6f}, {logits.max().item():.6f}]")
+            print(f"[EVALUATOR DEBUG] Model output mean: {logits.mean().item():.6f}")
+            
             # ===================== CHANGED FROM ORIGINAL: IMPLEMENT SPARSE MSE, ADD METRICS AND VISUALIZATION - from here ... =====================
             
-            # Central pixel logic - works for any image size, ensures central pixel is correctly identified
-            # Handle both odd and even image dimensions properly
+            # Simple central pixel logic - just use geometric center
             height, width = logits.shape[-2:]
             center_h = height // 2
             center_w = width // 2
             
-            # For AGBD: ensure we're always using the correct central pixel
-            # If image size is 25x25, center is at (12,12). If 50x50, center is at (25,25), etc.
+            print(f"[EVALUATOR DEBUG] Using geometric center: ({center_h}, {center_w}) for {height}x{width} patch")
+            
+            # Create central pixel coordinates for visualization
+            central_pixel_coords = [(center_h, center_w)] * logits.shape[0]
             
             assert logits.shape == target.shape, f"Shape error in evaluator.py: logits.shape = {logits.shape} != target.shape {target.shape}"
 
@@ -480,105 +502,97 @@ class RegEvaluator(Evaluator):
                         writer.writerow([batch_idx, i, central_targets[i].item(), central_logits[i].item(), mse_to_print.item()])
                     file.close()
 
-            # ------------------------------ VISUALIZATION ------------------------------
-            # save predicted values in testing phase, when best model with name "chechpoint__best" is called to evaluate on the test dataset (only when use_wandb=true)
-            if self.use_wandb and self.rank == 0 and ((batch_idx % self.visualization_interval == 0) or (model_name in ["epoch 0", "epoch 10", "checkpoint__best"])):
-                # CLONE PREDICTED AND GROUND TRUTH TENSORS, SO THAT ANY CHANGES DO NOT AFFECT ORIGINAL TENSOR
-                pred_saved = logits.clone()
-                target_saved = target.clone()
-
-                # create index for random image in the batch
-                max_batch_size = logits.shape[0]
-                i = random.randint(0, max_batch_size-1)
-
-                # Use the corrected central pixel coordinates
-                logits_pxl = pred_saved[i, center_h, center_w]
-                target_pxl = target_saved[i, center_h, center_w]
-                
-                pred_saved_masked = torch.zeros((pred_saved[i,:,:].shape))
-                target_saved_masked = torch.zeros((target_saved[i,:,:].shape))
-
-                pred_saved_masked[center_h, center_w] = logits_pxl
-                target_saved_masked[center_h, center_w] = target_pxl
-
-                # Create a 7x7 window around center for visualization (handle edge cases)
-                h_start = max(0, center_h - 3)
-                h_end = min(height, center_h + 4)
-                w_start = max(0, center_w - 3)
-                w_end = min(width, center_w + 4)
-                
-                pred_saved_masked = pred_saved_masked[h_start:h_end, w_start:w_end]
-                target_saved_masked = target_saved_masked[h_start:h_end, w_start:w_end]
-
-                # TRANSFORM TO NUMPY
-                pred_np = pred_saved.cpu().numpy()
-                target_np = target_saved.cpu().numpy()
-                pred_saved_masked_np = pred_saved_masked.cpu().numpy()
-                target_saved_masked_np = target_saved_masked.cpu().numpy()
-                
-                # LOG INTO WANDB AFTER SLICING (TENSOR IS 3D, TAKE ANY IMAGE)
-                img_pred = wandb.Image(pred_np[i,:,:], caption=f"prediction (value: {logits_pxl:.3f})")
-                img_target = wandb.Image(target_np[i,:,:], caption=f"ground truth (value: {target_pxl:.3f})")
-
-                img_pred_masked = wandb.Image(pred_saved_masked_np, caption=f"prediction (masked, zoomed) (value: {logits_pxl:.3f})")
-                img_target_masked = wandb.Image(target_saved_masked_np, caption=f"ground truth (masked, zoomed) (value: {target_pxl:.3f})")
-
-                wandb.log({f"batch_{batch_idx}_{model_name}_#{i}: MSE = {mse_to_print:.3f}": (img_pred, img_target, img_pred_masked, img_target_masked)})
-
-                # Log marker file for test automation
-                try:
-                    marker_path = os.path.join(self.exp_dir, "visualization_done.txt")
-                    with open(marker_path, "a") as marker_file:
-                        marker_file.write(f"Visualization logged for batch {batch_idx}, model {model_name}\n")
-                except Exception as e:
-                    print(f"[WARN] Could not write visualization marker: {e}")
-
-            # ------------------------------ VISUALIZATION ------------------------------
+            # Note: Advanced AGBD visualization handles all visualization needs
+            # The comprehensive visualization above replaces the basic approach below
             
             # ------------------------------ ADVANCED VISUALIZATION (AGBD) ------------------------------
-            try:
-                # Use new visualization util, pass batch as inputs
-                log_agbd_regression_visuals(
-                    inputs=data if isinstance(data, dict) else {},
-                    pred=logits,
-                    target=target,
-                    band_order=None,  # Let util auto-detect if possible
-                    wandb_run=wandb,
-                    step=batch_idx,
-                    prefix=self.split,
-                    max_samples=3,
-                    dataset=self.val_loader.dataset
-                )
-            except Exception as e:
-                print(f"[WARN] Advanced AGBD visualization failed: {e}")
+            # Enhanced AGBD visualization with proper biomass units and multi-modal displays
+            # Addresses meeting requirements for better visualizations logged to WandB
+            if self.use_wandb and self.rank == 0 and ((batch_idx % self.visualization_interval == 0) or (model_name in ["epoch 0", "epoch 10", "checkpoint__best"])):
+                try:
+                    # Create central pixel coordinates list for batch - WARNING: these may not be accurate after random cropping!
+                    batch_size = logits.shape[0]
+                    # Use new comprehensive AGBD visualization utility
+                    log_agbd_regression_visuals(
+                        inputs=data,  # Pass full data dictionary with image bands
+                        pred=logits,  # Predicted biomass maps
+                        target=target,  # Ground truth biomass maps
+                        band_order=getattr(self.val_loader.dataset, 'band_order', None),
+                        wandb_run=wandb,
+                        step=batch_idx,
+                        prefix=self.split,
+                        max_samples=2,  # Limit to 2 samples per batch for performance
+                        dataset=self.val_loader.dataset,
+                        model_name=model_name  # Pass model name for visualization title
+                    )
+                except Exception as e:
+                    print(f"[WARN] Advanced AGBD visualization failed for batch {batch_idx}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Fallback to basic visualization
+                    try:
+                        # CLONE PREDICTED AND GROUND TRUTH TENSORS FOR FALLBACK VIZ
+                        pred_saved = logits.clone()
+                        target_saved = target.clone()
+
+                        # Create index for random image in the batch
+                        max_batch_size = logits.shape[0]
+                        i = random.randint(0, max_batch_size-1)
+
+                        # Use the corrected central pixel coordinates
+                        logits_pxl = pred_saved[i, center_h, center_w]
+                        target_pxl = target_saved[i, center_h, center_w]
+                        
+                        # Create simple WandB images as fallback
+                        pred_np = pred_saved.cpu().numpy()
+                        target_np = target_saved.cpu().numpy()
+                        
+                        # LOG SIMPLE IMAGES TO WANDB AS FALLBACK
+                        img_pred = wandb.Image(pred_np[i,:,:], caption=f"prediction (value: {logits_pxl:.3f} Mg/ha)")
+                        img_target = wandb.Image(target_np[i,:,:], caption=f"ground truth (value: {target_pxl:.3f} Mg/ha)")
+
+                        wandb.log({f"fallback_batch_{batch_idx}_{model_name}_#{i}: MSE = {mse_to_print:.3f}": (img_pred, img_target)})
+                    except Exception as fallback_e:
+                        print(f"[WARN] Even fallback visualization failed: {fallback_e}")
+                        import traceback
+                        traceback.print_exc()
             # ------------------------------ ADVANCED VISUALIZATION (AGBD) ------------------------------
 
 
-        # CRITICAL FIX: Multi-GPU reduction for all metrics
+        # CRITICAL FIX: Multi-GPU reduction for all metrics (MEETING NOTES REQUIREMENT)
+        # "she sums everything up, torch reduce -> she uses sum she divides by dataset lens by one gpu not all gives inflated error"
+        # "divide by number of gpus or use torch reduce average"
+        # "for mae there is no reduce for gpus so she just reports mae for first needs to be collected for all gpus"
+        
         # Convert total_samples to tensor for reduction
         total_samples_tensor = torch.tensor(total_samples, device=self.device, dtype=torch.float32)
         
         # Only apply distributed reduction if actually running in distributed mode
-        if torch.distributed.is_initialized():
-            # Reduce all metrics across GPUs - use SUM for proper aggregation
+        if torch.distributed.is_initialized() and torch.distributed.get_world_size() > 1:
+            # CORRECT APPROACH: Sum all metrics across GPUs, then divide by total samples across all GPUs
+            # This ensures proper averaging and fixes the "inflated error" bug
+            
+            # Sum metrics and total samples across all GPUs
             torch.distributed.all_reduce(mse, op=torch.distributed.ReduceOp.SUM)
             torch.distributed.all_reduce(mean_absolute_error, op=torch.distributed.ReduceOp.SUM)
             torch.distributed.all_reduce(mean_error, op=torch.distributed.ReduceOp.SUM)
             torch.distributed.all_reduce(total_samples_tensor, op=torch.distributed.ReduceOp.SUM)
             
-            # Convert back to python int
+            # Convert back to python int for logging
             total_samples_all_gpus = int(total_samples_tensor.item())
             
-            # Proper averaging: divide by total number of samples across ALL GPUs
-            # This fixes the "inflated error" bug mentioned in meeting notes
+            # Now divide by total samples across ALL GPUs (this was the bug!)
+            # Previous code was dividing by samples on one GPU only, causing inflated errors
             mse = mse / total_samples_all_gpus
-            mean_absolute_error = mean_absolute_error / total_samples_all_gpus
+            mean_absolute_error = mean_absolute_error / total_samples_all_gpus  
             mean_error = mean_error / total_samples_all_gpus
+            
         else:
-            # Single GPU case - divide by number of samples on this GPU
+            # Single GPU case - divide by number of samples on this GPU  
             mse = mse / total_samples
             mean_absolute_error = mean_absolute_error / total_samples
             mean_error = mean_error / total_samples
+            total_samples_all_gpus = total_samples
 
         other_metrics = {"MAE": mean_absolute_error.item(), "ME": mean_error.item()}
 

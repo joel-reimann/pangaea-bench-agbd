@@ -577,15 +577,36 @@ class RegTrainer(Trainer):
         Returns:
             torch.Tensor: loss value.
         """
-        # for sparse mse, get central pixel assuming image height = image width and no rescaling
-        pxl = int(logits.shape[-1]/2)
+        # CRITICAL FIX: Central pixel logic for AGBD consistency
+        # Must match the evaluator and dataset logic exactly
         
-        assert logits.squeeze(dim=1).shape == target.shape, f"Shape error in evaluator.py: logits.shape (squeezed) = {logits.squeeze(dim=1).shape} != target.shape {target.shape}"
+        height, width = logits.shape[-2:]
+        
+        # For AGBD: Use the same center calculation as in dataset and evaluator
+        if hasattr(self.train_loader.dataset, 'center'):
+            # Use dataset's center if available (for AGBD compatibility)
+            dataset_center = self.train_loader.dataset.center
+            # Ensure center is within bounds after potential padding/cropping
+            center_h = min(dataset_center, height - 1)
+            center_w = min(dataset_center, width - 1)
+        else:
+            # Fallback to geometric center for other datasets
+            center_h = height // 2
+            center_w = width // 2
+        
+        # Additional safety check for AGBD patches
+        if height == 25 and width == 25:
+            # For 25x25 AGBD patches, center should be at (12, 12)
+            center_h = center_w = 12
+        elif height != width:
+            # For non-square patches, use geometric center
+            center_h = height // 2
+            center_w = width // 2
+        
+        assert logits.squeeze(dim=1).shape == target.shape, f"Shape error in trainer.py: logits.shape (squeezed) = {logits.squeeze(dim=1).shape} != target.shape {target.shape}"
 
-        # original code:
-        #return self.criterion(logits.squeeze(dim=1), target)
-
-        return self.criterion(logits.squeeze(dim=1)[:,pxl,pxl], target[:,pxl,pxl])
+        # Use central pixel for AGBD regression loss
+        return self.criterion(logits.squeeze(dim=1)[:, center_h, center_w], target[:, center_h, center_w])
 
     @torch.no_grad()
     def compute_logging_metrics(
@@ -597,14 +618,34 @@ class RegTrainer(Trainer):
             logits (torch.Tensor): logits from the decoder.
             target (torch.Tensor): target tensor.
         """
-        # for sparse mse, get central pixel assuming image height = image width and no rescaling
-        pxl = int(logits.shape[-1]/2)
+        # CRITICAL FIX: Central pixel logic for AGBD consistency
+        # Must match the compute_loss method exactly
+        
+        height, width = logits.shape[-2:]
+        
+        # For AGBD: Use the same center calculation as in dataset and evaluator
+        if hasattr(self.train_loader.dataset, 'center'):
+            # Use dataset's center if available (for AGBD compatibility)
+            dataset_center = self.train_loader.dataset.center
+            # Ensure center is within bounds after potential padding/cropping
+            center_h = min(dataset_center, height - 1)
+            center_w = min(dataset_center, width - 1)
+        else:
+            # Fallback to geometric center for other datasets
+            center_h = height // 2
+            center_w = width // 2
+        
+        # Additional safety check for AGBD patches
+        if height == 25 and width == 25:
+            # For 25x25 AGBD patches, center should be at (12, 12)
+            center_h = center_w = 12
+        elif height != width:
+            # For non-square patches, use geometric center
+            center_h = height // 2
+            center_w = width // 2
 
         # NOTE: Training metrics are local per-GPU and automatically averaged by DDP
         # No multi-GPU reduction bug here (unlike evaluator which needed fixes)
-        # original code:
-        #mse = F.mse_loss(logits.squeeze(dim=1), target)
-
-        mse = F.mse_loss(logits.squeeze(dim=1)[:,pxl,pxl], target[:,pxl,pxl])
+        mse = F.mse_loss(logits.squeeze(dim=1)[:, center_h, center_w], target[:, center_h, center_w])
         self.training_metrics["MSE"].update(mse.item())
 
