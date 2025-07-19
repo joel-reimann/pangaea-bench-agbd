@@ -123,52 +123,52 @@ def create_sar_biomass_visualization(sar_data: torch.Tensor) -> np.ndarray:
     Returns:
         False-color SAR visualization optimized for biomass
     """
-    print(f"[SAR VIZ DEBUG] Input SAR data shape: {sar_data.shape}")
+    # # print(f"[SAR VIZ DEBUG] Input SAR data shape: {sar_data.shape}")
     
     if sar_data.shape[0] == 0:
-        print(f"[SAR VIZ DEBUG] Empty SAR data, returning zeros")
+        # # print(f"[SAR VIZ DEBUG] Empty SAR data, returning zeros")
         return np.zeros((sar_data.shape[1], sar_data.shape[2], 3))
     
     sar_np = sar_data.cpu().numpy()
-    print(f"[SAR VIZ DEBUG] SAR numpy data range: [{sar_np.min():.6f}, {sar_np.max():.6f}]")
+    # # print(f"[SAR VIZ DEBUG] SAR numpy data range: [{sar_np.min():.6f}, {sar_np.max():.6f}]")
     
     if sar_data.shape[0] >= 2:  # HH and HV available
-        print(f"[SAR VIZ DEBUG] Using multi-polarization SAR visualization")
+        # # print(f"[SAR VIZ DEBUG] Using multi-polarization SAR visualization")
         hh = sar_np[0]  # HH polarization
         hv = sar_np[1]  # HV polarization
         
-        print(f"[SAR VIZ DEBUG] HH range: [{hh.min():.6f}, {hh.max():.6f}]")
-        print(f"[SAR VIZ DEBUG] HV range: [{hv.min():.6f}, {hv.max():.6f}]")
+        # # print(f"[SAR VIZ DEBUG] HH range: [{hh.min():.6f}, {hh.max():.6f}]")
+        # # print(f"[SAR VIZ DEBUG] HV range: [{hv.min():.6f}, {hv.max():.6f}]")
         
         # Create biomass-sensitive combination
         # HV/HH ratio is sensitive to vegetation volume (key for biomass)
         ratio = np.divide(hv, hh, out=np.zeros_like(hv), where=(np.abs(hh) > 1e-8))
-        print(f"[SAR VIZ DEBUG] HV/HH ratio range: [{ratio.min():.6f}, {ratio.max():.6f}]")
+        # # print(f"[SAR VIZ DEBUG] HV/HH ratio range: [{ratio.min():.6f}, {ratio.max():.6f}]")
         
         # Enhanced robust normalization that preserves spatial variation
         def robust_normalize_enhanced(data, channel_name=""):
             if data.size == 0 or not np.isfinite(data).any():
-                print(f"[SAR VIZ DEBUG] {channel_name}: No finite data, returning zeros")
+                # # print(f"[SAR VIZ DEBUG] {channel_name}: No finite data, returning zeros")
                 return np.zeros_like(data)
             
             finite_data = data[np.isfinite(data)]
             if finite_data.size == 0:
-                print(f"[SAR VIZ DEBUG] {channel_name}: No finite data after filtering, returning zeros")
+                # # print(f"[SAR VIZ DEBUG] {channel_name}: No finite data after filtering, returning zeros")
                 return np.zeros_like(data)
             
             # Use percentiles to exclude potential padding/outliers while preserving real variation
             p1, p99 = np.percentile(finite_data, [1, 99])
             data_spread = p99 - p1
-            print(f"[SAR VIZ DEBUG] {channel_name}: P1-P99 range: [{p1:.6f}, {p99:.6f}], spread={data_spread:.6f}")
+            # # print(f"[SAR VIZ DEBUG] {channel_name}: P1-P99 range: [{p1:.6f}, {p99:.6f}], spread={data_spread:.6f}")
             
             if data_spread < 1e-6:
                 # If almost no variation in the main data, check if there's any variation at all
                 data_min, data_max = finite_data.min(), finite_data.max()
                 total_spread = data_max - data_min
-                print(f"[SAR VIZ DEBUG] {channel_name}: Total spread: {total_spread:.6f}")
+                # # print(f"[SAR VIZ DEBUG] {channel_name}: Total spread: {total_spread:.6f}")
                 
                 if total_spread < 1e-8:
-                    print(f"[SAR VIZ DEBUG] {channel_name}: Truly uniform data, creating spatial gradient")
+                    # # print(f"[SAR VIZ DEBUG] {channel_name}: Truly uniform data, creating spatial gradient")
                     # Create spatial gradient in warm colors to avoid blue padding artifacts
                     h, w = data.shape
                     y_grad = np.linspace(0, 0.2, h).reshape(-1, 1)  # Reduced intensity
@@ -185,7 +185,7 @@ def create_sar_biomass_visualization(sar_data: torch.Tensor) -> np.ndarray:
                 normalized = np.clip((data - p1) / data_spread, 0, 1)
             
             normalized[~np.isfinite(data)] = 0
-            print(f"[SAR VIZ DEBUG] {channel_name}: Normalized range: [{normalized.min():.6f}, {normalized.max():.6f}]")
+            # # print(f"[SAR VIZ DEBUG] {channel_name}: Normalized range: [{normalized.min():.6f}, {normalized.max():.6f}]")
             return normalized
         
         # Enhanced false color for biomass: Use perceptually uniform colors avoiding yellow/white
@@ -205,11 +205,11 @@ def create_sar_biomass_visualization(sar_data: torch.Tensor) -> np.ndarray:
         b_channel = np.clip(b_channel * 1.0, 0, 1)
         
         result = np.stack([r_channel, g_channel, b_channel], axis=2)
-        print(f"[SAR VIZ DEBUG] Multi-pol result shape: {result.shape}, range: [{result.min():.6f}, {result.max():.6f}]")
+        # # print(f"[SAR VIZ DEBUG] Multi-pol result shape: {result.shape}, range: [{result.min():.6f}, {result.max():.6f}]")
         return result
     else:
         # Single SAR band visualization with enhanced normalization
-        print(f"[SAR VIZ DEBUG] Using single-band SAR visualization")
+        # # print(f"[SAR VIZ DEBUG] Using single-band SAR visualization")
         single_band = sar_np[0]
         if single_band.size == 0 or not np.isfinite(single_band).any():
             sar_vis = np.zeros_like(single_band)
@@ -221,7 +221,7 @@ def create_sar_biomass_visualization(sar_data: torch.Tensor) -> np.ndarray:
                 # Use percentile-based normalization for single band
                 p2, p98 = np.percentile(finite_data, [2, 98])
                 data_spread = p98 - p2
-                print(f"[SAR VIZ DEBUG] Single band P2-P98 range: [{p2:.6f}, {p98:.6f}], spread={data_spread:.6f}")
+                # # print(f"[SAR VIZ DEBUG] Single band P2-P98 range: [{p2:.6f}, {p98:.6f}], spread={data_spread:.6f}")
                 
                 if data_spread < 1e-6:
                     # Create spatial pattern with warm colors if no variation
@@ -231,7 +231,7 @@ def create_sar_biomass_visualization(sar_data: torch.Tensor) -> np.ndarray:
                     sar_vis = y_grad + x_grad
                     sar_vis = sar_vis / sar_vis.max() if sar_vis.max() > 0 else sar_vis
                     sar_vis = np.power(sar_vis, 0.6)  # Enhance visibility without harshness
-                    print(f"[SAR VIZ DEBUG] Single band: Created warm spatial gradient")
+                    # # print(f"[SAR VIZ DEBUG] Single band: Created warm spatial gradient")
                 else:
                     sar_vis = np.clip((single_band - p2) / data_spread, 0, 1)
                     sar_vis[~np.isfinite(single_band)] = 0
@@ -337,7 +337,7 @@ def log_agbd_regression_visuals(
             elif hasattr(dataset, '__class__'):
                 dataset_name = dataset.__class__.__name__
         
-        print(f"[VIZ DEBUG] Creating visualizations for {samples_to_viz} samples from dataset: {dataset_name}, model: {model_name}")
+        # # print(f"[VIZ DEBUG] Creating visualizations for {samples_to_viz} samples from dataset: {dataset_name}, model: {model_name}")
         
         # Use center of current patch for consistent visualization
         height, width = pred.shape[-2:]
@@ -368,15 +368,16 @@ def log_agbd_regression_visuals(
                         rgb_vis = create_rgb_from_bands(optical_data)
                         # Check if RGB has meaningful content
                         rgb_variation = rgb_vis.max() - rgb_vis.min()
-                        print(f"[VIZ DEBUG] Sample {i}: Optical RGB variation: {rgb_variation:.6f}")
+                        # # print(f"[VIZ DEBUG] Sample {i}: Optical RGB variation: {rgb_variation:.6f}")
                         
                         if rgb_variation > 1e-3:  # Has meaningful variation
                             axes[0, 0].imshow(rgb_vis)
                             axes[0, 0].set_title('S2 Optical RGB\n(B4-B3-B2)')
                             optical_visualization_created = True
-                            print(f"[VIZ DEBUG] Sample {i}: Successfully created optical RGB")
+                            # # print(f"[VIZ DEBUG] Sample {i}: Successfully created optical RGB")
                         else:
-                            print(f"[VIZ DEBUG] Sample {i}: Optical RGB has low variation, will show fallback")
+                            # # print(f"[VIZ DEBUG] Sample {i}: Optical RGB has low variation, will show fallback")
+                            pass
                     except Exception as e:
                         print(f"[VIZ DEBUG] Sample {i}: Optical RGB creation failed: {e}")
                 
@@ -393,7 +394,7 @@ def log_agbd_regression_visuals(
                                 fallback_rgb = (fallback_rgb - fallback_rgb.min()) / (fallback_rgb.max() - fallback_rgb.min())
                             axes[0, 0].imshow(fallback_rgb)
                             axes[0, 0].set_title('S2 Optical (Fallback)\n(B1-B2-B3)')
-                            print(f"[VIZ DEBUG] Sample {i}: Used optical fallback visualization")
+                            # # print(f"[VIZ DEBUG] Sample {i}: Used optical fallback visualization")
                         else:
                             axes[0, 0].text(0.5, 0.5, 'Insufficient Optical Bands', ha='center', va='center')
                             axes[0, 0].set_title('S2 Optical (Error)')
@@ -405,31 +406,33 @@ def log_agbd_regression_visuals(
                 axes[0, 0].set_ylabel('Pixel')
                 
                 # 2. SAR visualization - handle when SAR is filtered out by model
-                print(f"[VIZ DEBUG] Sample {i}: Checking for SAR data...")
-                print(f"[VIZ DEBUG] Sample {i}: 'image' in inputs: {'image' in inputs}")
+                # print(f"[VIZ DEBUG] Sample {i}: Checking for SAR data...")
+                # print(f"[VIZ DEBUG] Sample {i}: 'image' in inputs: {'image' in inputs}")
                 if 'image' in inputs:
-                    print(f"[VIZ DEBUG] Sample {i}: inputs['image'] keys: {list(inputs['image'].keys())}")
+                    # print(f"[VIZ DEBUG] Sample {i}: inputs['image'] keys: {list(inputs['image'].keys())}")
                     if 'sar' in inputs['image']:
                         print(f"[VIZ DEBUG] Sample {i}: SAR shape: {inputs['image']['sar'].shape}")
+
                 
                 sar_visualization_created = False
                 if 'image' in inputs and 'sar' in inputs['image']:
                     sar_data = inputs['image']['sar'][i, :, 0, :, :]  # Remove temporal dimension
-                    print(f"[VIZ DEBUG] Sample {i}: SAR data for visualization - shape: {sar_data.shape}, range: [{sar_data.min():.6f}, {sar_data.max():.6f}]")
+                    # print(f"[VIZ DEBUG] Sample {i}: SAR data for visualization - shape: {sar_data.shape}, range: [{sar_data.min():.6f}, {sar_data.max():.6f}]")
                     sar_vis = create_sar_visualization(sar_data)
-                    print(f"[VIZ DEBUG] Sample {i}: SAR visualization - shape: {sar_vis.shape}, range: [{sar_vis.min():.6f}, {sar_vis.max():.6f}]")
+                    # print(f"[VIZ DEBUG] Sample {i}: SAR visualization - shape: {sar_vis.shape}, range: [{sar_vis.min():.6f}, {sar_vis.max():.6f}]")
                     
                     # Check if SAR visualization has meaningful content
                     sar_variation = sar_vis.max() - sar_vis.min()
-                    print(f"[VIZ DEBUG] Sample {i}: SAR visualization variation: {sar_variation:.6f}")
+                    # print(f"[VIZ DEBUG] Sample {i}: SAR visualization variation: {sar_variation:.6f}")
                     
                     if sar_variation > 1e-3:  # Has meaningful variation
                         axes[0, 1].imshow(sar_vis)
                         axes[0, 1].set_title('SAR Data\n(PALSAR-2 HH/HV)')
                         sar_visualization_created = True
-                        print(f"[VIZ DEBUG] Sample {i}: Successfully visualized SAR data with variation")
+                        # print(f"[VIZ DEBUG] Sample {i}: Successfully visualized SAR data with variation")
                     else:
-                        print(f"[VIZ DEBUG] Sample {i}: SAR data has low variation, will show fallback")
+                        # print(f"[VIZ DEBUG] Sample {i}: SAR data has low variation, will show fallback")
+                        pass
                 
                 if not sar_visualization_created:
                     # Create fallback SAR visualization - always show this for transparency
@@ -443,7 +446,7 @@ def log_agbd_regression_visuals(
                                 sar_fallback = (sar_fallback - sar_fallback.min()) / (sar_fallback.max() - sar_fallback.min())
                             axes[0, 1].imshow(sar_fallback, cmap='gray')
                             axes[0, 1].set_title('SAR Data (Fallback)\n(Raw normalized)')
-                            print(f"[VIZ DEBUG] Sample {i}: Used SAR fallback visualization")
+                            # print(f"[VIZ DEBUG] Sample {i}: Used SAR fallback visualization")
                         else:
                             axes[0, 1].text(0.5, 0.5, 'Empty SAR Data\n(No bands)', ha='center', va='center',
                                            bbox=dict(boxstyle="round,pad=0.3", facecolor="orange", alpha=0.8))
@@ -453,7 +456,7 @@ def log_agbd_regression_visuals(
                         axes[0, 1].text(0.5, 0.5, 'No SAR Data\n(Model uses optical only)', ha='center', va='center', 
                                        bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.8))
                         axes[0, 1].set_title('SAR Data (N/A)')
-                        print(f"[VIZ DEBUG] Sample {i}: SAR data not available for visualization")
+                        # print(f"[VIZ DEBUG] Sample {i}: SAR data not available for visualization")
                 
                 axes[0, 1].set_xlabel('Pixel')
                 axes[0, 1].set_ylabel('Pixel')
@@ -718,23 +721,23 @@ def create_sar_visualization(sar_data: torch.Tensor) -> np.ndarray:
     Returns:
         Grayscale or false-color SAR visualization
     """
-    print(f"[SAR VIZ DEBUG] Input SAR data shape: {sar_data.shape}")
+    # print(f"[SAR VIZ DEBUG] Input SAR data shape: {sar_data.shape}")
     if sar_data.shape[0] == 0:
-        print(f"[SAR VIZ DEBUG] Empty SAR data, returning zeros")
+        # print(f"[SAR VIZ DEBUG] Empty SAR data, returning zeros")
         return np.zeros((sar_data.shape[1], sar_data.shape[2], 3))
     
     sar_np = sar_data.cpu().numpy()
-    print(f"[SAR VIZ DEBUG] SAR numpy data range: [{sar_np.min():.6f}, {sar_np.max():.6f}]")
+    # print(f"[SAR VIZ DEBUG] SAR numpy data range: [{sar_np.min():.6f}, {sar_np.max():.6f}]")
     
     if sar_data.shape[0] >= 2:
         # Multi-polarization SAR visualization
-        print(f"[SAR VIZ DEBUG] Using multi-polarization SAR visualization")
+        # print(f"[SAR VIZ DEBUG] Using multi-polarization SAR visualization")
         result = create_sar_biomass_visualization(sar_data)
-        print(f"[SAR VIZ DEBUG] Multi-pol result shape: {result.shape}, range: [{result.min():.6f}, {result.max():.6f}]")
+        # print(f"[SAR VIZ DEBUG] Multi-pol result shape: {result.shape}, range: [{result.min():.6f}, {result.max():.6f}]")
         return result
     else:
         # Enhanced single band SAR visualization
-        print(f"[SAR VIZ DEBUG] Using enhanced single band SAR visualization")
+        # print(f"[SAR VIZ DEBUG] Using enhanced single band SAR visualization")
         sar_single = sar_np[0]
         
         # Apply enhanced normalization
@@ -748,7 +751,7 @@ def create_sar_visualization(sar_data: torch.Tensor) -> np.ndarray:
                 # Use percentiles for robust normalization
                 p2, p98 = np.percentile(finite_data, [2, 98])
                 data_spread = p98 - p2
-                print(f"[SAR VIZ DEBUG] Single band P2-P98: [{p2:.6f}, {p98:.6f}], spread: {data_spread:.6f}")
+                # print(f"[SAR VIZ DEBUG] Single band P2-P98: [{p2:.6f}, {p98:.6f}], spread: {data_spread:.6f}")
                 
                 if data_spread < 1e-6:
                     # Create spatial gradient if no variation
@@ -757,7 +760,7 @@ def create_sar_visualization(sar_data: torch.Tensor) -> np.ndarray:
                     x_grad = np.linspace(0, 0.5, w).reshape(1, -1)
                     sar_normalized = y_grad + x_grad
                     sar_normalized = sar_normalized / sar_normalized.max() if sar_normalized.max() > 0 else sar_normalized
-                    print(f"[SAR VIZ DEBUG] Created spatial gradient for uniform SAR data")
+                    # print(f"[SAR VIZ DEBUG] Created spatial gradient for uniform SAR data")
                 else:
                     sar_normalized = np.clip((sar_single - p2) / data_spread, 0, 1)
                     # Apply contrast enhancement
@@ -767,7 +770,7 @@ def create_sar_visualization(sar_data: torch.Tensor) -> np.ndarray:
         
         # Convert to RGB for consistency
         result = np.stack([sar_normalized, sar_normalized, sar_normalized], axis=2)
-        print(f"[SAR VIZ DEBUG] Single band result shape: {result.shape}, range: [{result.min():.6f}, {result.max():.6f}]")
+        # print(f"[SAR VIZ DEBUG] Single band result shape: {result.shape}, range: [{result.min():.6f}, {result.max():.6f}]")
         return result
 
 # Removed log_agbd_revolutionary_visuals function - overly complex and no longer used

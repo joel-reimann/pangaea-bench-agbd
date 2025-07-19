@@ -37,7 +37,8 @@ show_model: False  # added to be able to print model and save it if wanted
 
 # PREPROCESSING STRATEGY SELECTION (CRITICAL MEETING DECISION)
 # Use padding strategy to maintain spatial resolution (1 pixel = 10-16 meters)
-# To use new padding strategy: preprocessing=reg_agbd_padding (recommended)
+# UPDATED: Using reg_agbd_original (has padding but NO normalization - dataset handles it)
+# To use new padding strategy: preprocessing=reg_agbd_original (recommended - matches original AGBD)
 # To use old resizing strategy: preprocessing=reg_agbd_resize (causes checkerboard patterns)
 
 defaults:
@@ -46,7 +47,7 @@ defaults:
   - dataset: ???
   - encoder: ???
   - decoder: ???
-  - preprocessing: ???  # Set to reg_agbd_padding for new strategy
+  - preprocessing: reg_agbd_padding  # Set to reg_agbd_padding for proper PANGAEA normalization with padding
   - criterion: ???
   - optimizer: adamw
   - lr_scheduler: multi_step_lr

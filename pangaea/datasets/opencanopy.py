@@ -32,6 +32,7 @@ class OpenCanopy(RawGeoFMDataset):
         data_max: dict[str, list[str]],
         download_url: str,
         auto_download: bool,
+        debug: bool = False,  # ADDITION: Debug parameter for testing with subset of data
     ):
         """Initialize the Open-Canopy dataset.
 
@@ -61,6 +62,7 @@ class OpenCanopy(RawGeoFMDataset):
             e.g. {"s2": [b1_max, ..., bn_max], "s1": [b1_max, ..., bn_max]}
             download_url (str): url to download the dataset.
             auto_download (bool): whether to download the dataset automatically.
+            debug (bool): ADDITION - Use debug mode with limited data for testing. Default False.
         """
         super(OpenCanopy, self).__init__(
             split=split,
@@ -81,6 +83,9 @@ class OpenCanopy(RawGeoFMDataset):
             download_url=download_url,
             auto_download=auto_download,
         )
+        
+        # ADDITION: Store debug parameter for data limitation
+        self.debug = debug
 
         assert split in ["train", "val", "test"], "Split must be train, val or test"
         with open("data/canopy_height/geometries.geojson", "r") as f:
@@ -90,6 +95,12 @@ class OpenCanopy(RawGeoFMDataset):
         self.metadata["features"] = [
             feature for feature in self.metadata["features"] if feature["properties"]["split"] == split
         ]
+        
+        # ADDITION: Apply debug mode - limit data to small subset for quick testing
+        if self.debug:
+            print(f"[OpenCanopy DEBUG] Original {split} samples: {len(self.metadata['features'])}")
+            self.metadata["features"] = self.metadata["features"][:5]  # Limit to 5 samples for debug
+            print(f"[OpenCanopy DEBUG] Debug mode - limited to {len(self.metadata['features'])} samples")
     
 
     def __getitem__(self, i: int) -> dict[str, torch.Tensor | dict[str, torch.Tensor]]:

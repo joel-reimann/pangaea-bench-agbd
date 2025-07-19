@@ -18,7 +18,7 @@ split: None                               # is overwritten when run.py
 chunk_size: 1                             # AGBD is patch-based, so chunk_size=1, same as in original script, see source above
 years: [2019, 2020]                       # for file extraction
 
-img_size: 25
+img_size: 32  # CRITICAL FIX: Pad 25x25 to 32x32 for ViT token alignment (25 % 16 != 0 causes checkerboard artifacts)
 multi_temporal: False                     # AGBD is not multi_temporal
 multi_modal: True                         # AGBD has S2 bands, SAR bands and auxiliary bands, for SatMAE only used S2 bands and SAR bands
 debug: False                              # When true, only a part of the data is loaded, reduces computation time
@@ -33,9 +33,10 @@ distribution:                             # only one class => one distribution
   - 1.0
 
 # Band configuration - all available modalities 
+# Note: AGBD provides HH/HV, but some models expect VV/VH, so we map HH->VV, HV->VH
 bands:
   optical: [B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12]
-  sar: [HH, HV] 
+  sar: [HH, HV]  # AGBD provides these 2 bands, we map to VV/VH for model compatibility if needed
   #auxiliary: [DEM, CH_ch, CH_std, LC_1, LC_2, S2_SCL] 
 
 # Normalization statistics from diagnostic logs (look up in statistics files, see download.sh in source above)

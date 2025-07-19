@@ -4,6 +4,9 @@ root_path: ./data/canopy_height
 download_url: 
 auto_download: True
 
+# ADDITION: Debug mode for testing with subset of data (limits to 5 samples per split)
+debug: False  # Set to True to enable debug mode with limited data
+
 img_size: 667
 multi_temporal: False
 multi_modal: False

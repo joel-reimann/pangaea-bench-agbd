@@ -165,7 +165,7 @@ class BandFilter(BasePreprocessor):
                         mapped_band = sar_band_mapping[requested_band]
                         if mapped_band in meta["data_bands"][k]:
                             mapped_indices.append(meta["data_bands"][k].index(mapped_band))
-                            print(f"[BANDFILTER DEBUG] Mapped SAR band {requested_band} -> {mapped_band}")
+                            # print(f"[BANDFILTER DEBUG] Mapped SAR band {requested_band} -> {mapped_band}")
                 
                 self.used_bands_indices[k] = torch.tensor(mapped_indices, dtype=torch.long)
             else:
@@ -200,20 +200,21 @@ class BandFilter(BasePreprocessor):
              "metadata": dict}.
         """
 
-        print(f"[BANDFILTER DEBUG] BandFilter called")
-        print(f"[BANDFILTER DEBUG] Input modalities: {list(data['image'].keys())}")
-        print(f"[BANDFILTER DEBUG] Used bands indices: {self.used_bands_indices}")
+        # print(f"[BANDFILTER DEBUG] BandFilter called")
+        # print(f"[BANDFILTER DEBUG] Input modalities: {list(data['image'].keys())}")
+        # print(f"[BANDFILTER DEBUG] Used bands indices: {self.used_bands_indices}")
         
         data["image"] = {
             k: data["image"][k][v] for k, v in self.used_bands_indices.items()
         }
         
-        print(f"[BANDFILTER DEBUG] Output modalities: {list(data['image'].keys())}")
+        # print(f"[BANDFILTER DEBUG] Output modalities: {list(data['image'].keys())}")
         for k, v in data["image"].items():
             if v.numel() > 0:
-                print(f"[BANDFILTER DEBUG] {k}: shape={v.shape}, range=[{v.min().item():.6f}, {v.max().item():.6f}]")
+                # print(f"[BANDFILTER DEBUG] {k}: shape={v.shape}, range=[{v.min().item():.6f}, {v.max().item():.6f}]")
+                pass
             else:
-                print(f"[BANDFILTER DEBUG] {k}: shape={v.shape}, EMPTY TENSOR (filtered out all bands)")
+                # print(f"[BANDFILTER DEBUG] {k}: shape={v.shape}, EMPTY TENSOR (filtered out all bands)")
                 print(f"[BANDFILTER WARNING] {k} modality has no bands after filtering - this will likely cause model errors!")
 
         return data
@@ -422,29 +423,30 @@ class NormalizeMinMax(BasePreprocessor):
         """
         
         # CRITICAL DEBUG: Track normalization
-        print(f"[NORMALIZER DEBUG] NormalizeMinMax called")
-        print(f"[NORMALIZER DEBUG] Available modalities: {list(data['image'].keys())}")
-        print(f"[NORMALIZER DEBUG] Data min keys: {list(self.data_min.keys())}")
-        print(f"[NORMALIZER DEBUG] Data max keys: {list(self.data_max.keys())}")
+        # print(f"[NORMALIZER DEBUG] NormalizeMinMax called")
+        # print(f"[NORMALIZER DEBUG] Available modalities: {list(data['image'].keys())}")
+        # print(f"[NORMALIZER DEBUG] Data min keys: {list(self.data_min.keys())}")
+        # print(f"[NORMALIZER DEBUG] Data max keys: {list(self.data_max.keys())}")
 
         for k in self.data_min.keys():
             if k in data["image"]:
-                print(f"[NORMALIZER DEBUG] Before normalization {k}:")
-                print(f"[NORMALIZER DEBUG]   Shape: {data['image'][k].shape}")
-                print(f"[NORMALIZER DEBUG]   Range: [{data['image'][k].min().item():.6f}, {data['image'][k].max().item():.6f}]")
-                print(f"[NORMALIZER DEBUG]   Mean: {data['image'][k].mean().item():.6f}")
-                print(f"[NORMALIZER DEBUG]   Data min: {self.data_min[k]}")
-                print(f"[NORMALIZER DEBUG]   Data max: {self.data_max[k]}")
+                # print(f"[NORMALIZER DEBUG] Before normalization {k}:")
+                # print(f"[NORMALIZER DEBUG]   Shape: {data['image'][k].shape}")
+                # print(f"[NORMALIZER DEBUG]   Range: [{data['image'][k].min().item():.6f}, {data['image'][k].max().item():.6f}]")
+                # print(f"[NORMALIZER DEBUG]   Mean: {data['image'][k].mean().item():.6f}")
+                # print(f"[NORMALIZER DEBUG]   Data min: {self.data_min[k]}")
+                # print(f"[NORMALIZER DEBUG]   Data max: {self.data_max[k]}")
                 
                 data["image"][k].sub_(self.data_min[k].view(-1, 1, 1, 1)).div_(
                     (self.data_max[k] - self.data_min[k]).view(-1, 1, 1, 1)
                 )
                 
-                print(f"[NORMALIZER DEBUG] After normalization {k}:")
-                print(f"[NORMALIZER DEBUG]   Range: [{data['image'][k].min().item():.6f}, {data['image'][k].max().item():.6f}]")
-                print(f"[NORMALIZER DEBUG]   Mean: {data['image'][k].mean().item():.6f}")
+                # print(f"[NORMALIZER DEBUG] After normalization {k}:")
+                # print(f"[NORMALIZER DEBUG]   Range: [{data['image'][k].min().item():.6f}, {data['image'][k].max().item():.6f}]")
+                # print(f"[NORMALIZER DEBUG]   Mean: {data['image'][k].mean().item():.6f}")
             else:
-                print(f"[NORMALIZER DEBUG] Modality {k} not in data, available: {list(data['image'].keys())}")
+                # print(f"[NORMALIZER DEBUG] Modality {k} not in data, available: {list(data['image'].keys())}")
+                pass
                 
         return data
 
@@ -530,14 +532,14 @@ class RandomCrop(BasePreprocessor):
 
             # Use correct padding tuple for TF.pad: (left, top, right, bottom)
             padding = (pad_img[1], pad_img[0], pad_img[1], pad_img[0])
-            print(f"[CROP DEBUG] check_pad: using padding={padding} for TF.pad on target")
-            print(f"[CROP DEBUG] Target before padding: shape={data['target'].shape}, range=[{data['target'].min().item():.6f}, {data['target'].max().item():.6f}]")
+            # print(f"[CROP DEBUG] check_pad: using padding={padding} for TF.pad on target")
+            # print(f"[CROP DEBUG] Target before padding: shape={data['target'].shape}, range=[{data['target'].min().item():.6f}, {data['target'].max().item():.6f}]")
             
             # CRITICAL FIX: For regression tasks, do NOT use ignore_index for padding
             # Instead, pad with the center pixel value (which contains the regression target)
             center_y, center_x = data["target"].shape[0] // 2, data["target"].shape[1] // 2
             center_value = data["target"][center_y, center_x].item()
-            print(f"[CROP DEBUG] Using center pixel value {center_value:.6f} for padding instead of ignore_index {self.ignore_index}")
+            # print(f"[CROP DEBUG] Using center pixel value {center_value:.6f} for padding instead of ignore_index {self.ignore_index}")
             
             data["target"] = TF.pad(
                 data["target"],
@@ -546,7 +548,7 @@ class RandomCrop(BasePreprocessor):
                 padding_mode="constant",
             )
             
-            print(f"[CROP DEBUG] Target after padding: shape={data['target'].shape}, range=[{data['target'].min().item():.6f}, {data['target'].max().item():.6f}]")
+            # print(f"[CROP DEBUG] Target after padding: shape={data['target'].shape}, range=[{data['target'].min().item():.6f}, {data['target'].max().item():.6f}]")
 
         return data
 
@@ -638,8 +640,8 @@ class FocusRandomCrop(RandomCrop):
         # CRITICAL FIX: For regression tasks, ignore_index should never appear in targets
         # If we're here, all pixels should be valid for regression
         if torch.sum(valid_map) == 0:
-            print(f"[CROP DEBUG] WARNING: No valid pixels found (all are ignore_index {self.ignore_index})")
-            print(f"[CROP DEBUG] Target stats: shape={data['target'].shape}, min={data['target'].min().item():.6f}, max={data['target'].max().item():.6f}")
+            # print(f"[CROP DEBUG] WARNING: No valid pixels found (all are ignore_index {self.ignore_index})")
+            # print(f"[CROP DEBUG] Target stats: shape={data['target'].shape}, min={data['target'].min().item():.6f}, max={data['target'].max().item():.6f}")
             # For regression, treat all pixels as valid
             valid_map = torch.ones_like(data["target"], dtype=torch.bool)
         

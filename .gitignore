@@ -11,6 +11,8 @@ work-dir/
 wandb/
 data/*
 data
+test_agbd_logs
+2025*
 pretrained_models
 # Scenes for mados tiny
 # Wow gitignore pattern mathcing is a mess

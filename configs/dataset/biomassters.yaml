@@ -8,6 +8,9 @@ temp: 6 #6 (select month to use if single temporal (multi_temporal : 1))
 multi_temporal: 12
 multi_modal: True
 
+# ADDITION: Added debug field for quick testing (same as AGBD)
+debug: False                              # When true, only a part of the data is loaded, reduces computation time
+
 # classes
 ignore_index: -1
 num_classes: 1

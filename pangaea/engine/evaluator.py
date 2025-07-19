@@ -425,19 +425,19 @@ class RegEvaluator(Evaluator):
 
         for batch_idx, data in enumerate(tqdm(self.val_loader, desc=tag)):
             # CRITICAL DEBUG: Track data through evaluation pipeline
-            print(f"\n[EVALUATOR DEBUG] Batch {batch_idx}")
-            print(f"[EVALUATOR DEBUG] Data keys: {list(data.keys())}")
+            # print(f"\n[EVALUATOR DEBUG] Batch {batch_idx}")
+            # print(f"[EVALUATOR DEBUG] Data keys: {list(data.keys())}")
             
-            if 'image' in data:
-                print(f"[EVALUATOR DEBUG] Image modalities: {list(data['image'].keys())}")
-                for mod, tensor in data['image'].items():
-                    print(f"[EVALUATOR DEBUG] {mod} input shape: {tensor.shape}")
-                    print(f"[EVALUATOR DEBUG] {mod} input range: [{tensor.min().item():.6f}, {tensor.max().item():.6f}]")
+            # if 'image' in data:
+            #     print(f"[EVALUATOR DEBUG] Image modalities: {list(data['image'].keys())}")
+            #     for mod, tensor in data['image'].items():
+            #         print(f"[EVALUATOR DEBUG] {mod} input shape: {tensor.shape}")
+            #         print(f"[EVALUATOR DEBUG] {mod} input range: [{tensor.min().item():.6f}, {tensor.max().item():.6f}]")
             
-            if 'target' in data:
-                print(f"[EVALUATOR DEBUG] Target input shape: {data['target'].shape}")
-                print(f"[EVALUATOR DEBUG] Target input range: [{data['target'].min().item():.6f}, {data['target'].max().item():.6f}]")
-                print(f"[EVALUATOR DEBUG] Target unique values (first 10): {torch.unique(data['target'])[:10]}")
+            # if 'target' in data:
+            #     print(f"[EVALUATOR DEBUG] Target input shape: {data['target'].shape}")
+            #     print(f"[EVALUATOR DEBUG] Target input range: [{data['target'].min().item():.6f}, {data['target'].max().item():.6f}]")
+            #     print(f"[EVALUATOR DEBUG] Target unique values (first 10): {torch.unique(data['target'])[:10]}")
             
             image, target = data['image'], data['target']
             image = {k: v.to(self.device) for k, v in image.items()}
@@ -445,18 +445,18 @@ class RegEvaluator(Evaluator):
 
             if self.inference_mode == "sliding":
                 input_size = model.module.encoder.input_size
-                print(f"[EVALUATOR DEBUG] Using sliding inference with input_size: {input_size}")
+                # print(f"[EVALUATOR DEBUG] Using sliding inference with input_size: {input_size}")
                 logits = self.sliding_inference(model, image, input_size, output_shape=target.shape[-2:],
                                                 max_batch=self.sliding_inference_batch).squeeze(dim=1)
             elif self.inference_mode == "whole":
-                print(f"[EVALUATOR DEBUG] Using whole image inference")
+                # print(f"[EVALUATOR DEBUG] Using whole image inference")
                 logits = model(image, output_shape=target.shape[-2:]).squeeze(dim=1)
             else:
                 raise NotImplementedError((f"Inference mode {self.inference_mode} is not implemented."))
             
-            print(f"[EVALUATOR DEBUG] Model output (logits) shape: {logits.shape}")
-            print(f"[EVALUATOR DEBUG] Model output range: [{logits.min().item():.6f}, {logits.max().item():.6f}]")
-            print(f"[EVALUATOR DEBUG] Model output mean: {logits.mean().item():.6f}")
+            # print(f"[EVALUATOR DEBUG] Model output (logits) shape: {logits.shape}")
+            # print(f"[EVALUATOR DEBUG] Model output range: [{logits.min().item():.6f}, {logits.max().item():.6f}]")
+            # print(f"[EVALUATOR DEBUG] Model output mean: {logits.mean().item():.6f}")
             
             # ===================== CHANGED FROM ORIGINAL: IMPLEMENT SPARSE MSE, ADD METRICS AND VISUALIZATION - from here ... =====================
             
@@ -465,7 +465,7 @@ class RegEvaluator(Evaluator):
             center_h = height // 2
             center_w = width // 2
             
-            print(f"[EVALUATOR DEBUG] Using geometric center: ({center_h}, {center_w}) for {height}x{width} patch")
+            # print(f"[EVALUATOR DEBUG] Using geometric center: ({center_h}, {center_w}) for {height}x{width} patch")
             
             # Create central pixel coordinates for visualization
             central_pixel_coords = [(center_h, center_w)] * logits.shape[0]
@@ -476,8 +476,25 @@ class RegEvaluator(Evaluator):
             central_logits = logits[:, center_h, center_w]  # [batch_size]
             central_targets = target[:, center_h, center_w]  # [batch_size]
             
+            # CRITICAL FIX: Handle ignore_index for padded values (same as segmentation evaluator)
+            # This was missing and causing padded values to be included in loss calculation!
+            if self.ignore_index is not None:
+                valid_mask = central_targets != self.ignore_index
+                if valid_mask.sum() == 0:
+                    # Skip this batch if all values are padded/ignored
+                    print(f"[WARN] Batch {batch_idx}: All central pixels are ignore_index ({self.ignore_index}), skipping")
+                    continue
+                
+                # Only use valid (non-padded) samples for metrics
+                central_logits = central_logits[valid_mask]
+                central_targets = central_targets[valid_mask]
+                batch_size = central_logits.shape[0]
+                
+                print(f"[DEBUG] Batch {batch_idx}: {valid_mask.sum().item()}/{len(valid_mask)} valid samples (ignore_index={self.ignore_index})")
+            else:
+                batch_size = central_logits.shape[0]
+            
             # Calculate batch size for proper averaging
-            batch_size = central_logits.shape[0]
             total_samples += batch_size
 
             # Calculate metrics for current batch - sum up for later averaging

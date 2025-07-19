@@ -1,0 +1,37 @@
+# AGBD Regression Preprocessing - ORIGINAL AGBD NORMALIZATION
+# This config removes PANGAEA normalization since AGBD dataset now handles it internally
+# using the original AGBD normalization functions and statistics files
+# This is CRITICAL for scientific accuracy and performance matching the original AGBD paper
+
+train:
+  _target_: pangaea.engine.data_preprocessor.Preprocessor
+  preprocessor_cfg:
+    # Use padding strategy instead of resizing - CRITICAL for maintaining pixel resolution
+    - _target_: pangaea.engine.data_preprocessor.RandomCropToEncoder
+      pad_if_needed: true  # Enable padding when image smaller than required
+    - _target_: pangaea.engine.data_preprocessor.BandFilter
+    # NOTE: NO NORMALIZATION - AGBD dataset handles this with original statistics
+    - _target_: pangaea.engine.data_preprocessor.BandPadding
+      fill_value: -1  # Pad with zeros as specified in meeting
+
+val:
+  _target_: pangaea.engine.data_preprocessor.Preprocessor
+  preprocessor_cfg:
+    # Use center crop with padding for validation - maintains central pixel focus
+    - _target_: pangaea.engine.data_preprocessor.FocusRandomCropToEncoder
+      pad_if_needed: true  # Enable padding
+    - _target_: pangaea.engine.data_preprocessor.BandFilter  
+    # NOTE: NO NORMALIZATION - AGBD dataset handles this with original statistics
+    - _target_: pangaea.engine.data_preprocessor.BandPadding
+      fill_value: -1  # Pad with zeros
+
+test:
+  _target_: pangaea.engine.data_preprocessor.Preprocessor
+  preprocessor_cfg:
+    # Same as validation for consistent evaluation
+    - _target_: pangaea.engine.data_preprocessor.FocusRandomCropToEncoder
+      pad_if_needed: true
+    - _target_: pangaea.engine.data_preprocessor.BandFilter
+    # NOTE: NO NORMALIZATION - AGBD dataset handles this with original statistics
+    - _target_: pangaea.engine.data_preprocessor.BandPadding
+      fill_value: -1

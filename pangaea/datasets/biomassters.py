@@ -70,6 +70,7 @@ class BioMassters(RawGeoFMDataset):
         download_url: str,
         auto_download: bool,
         temp: int,
+        debug: bool = False,  # ADDED: Debug mode for testing with subset of data
     ):
         """Initialize the BioMassters dataset.
         Link: https://huggingface.co/datasets/nascetti-a/BioMassters
@@ -101,6 +102,7 @@ class BioMassters(RawGeoFMDataset):
             download_url (str): url to download the dataset.
             auto_download (bool): whether to download the dataset automatically.
             temp (int): which temporal frame to use when using single temporal.
+            debug (bool): if True, use only a subset of data for quick testing (ADDED for PANGAEA-bench testing)
         """
         super(BioMassters, self).__init__(
             split=split,
@@ -126,6 +128,7 @@ class BioMassters(RawGeoFMDataset):
         self.multi_temporal = multi_temporal
         self.temp = temp
         self.split = split
+        self.debug = debug  # ADDED: Store debug flag
 
         self.data_mean = data_mean
         self.data_std = data_std
@@ -141,6 +144,12 @@ class BioMassters(RawGeoFMDataset):
         
         self.data_path = pathlib.Path(self.root_path).joinpath(f"{split}_Data_list.csv")
         self.id_list = pd.read_csv(self.data_path)['chip_id']
+        
+        # ADDED: Apply debug mode to limit data for quick testing
+        if self.debug:
+            print(f"[BIOMASSTERS DEBUG] Original dataset size: {len(self.id_list)}")
+            self.id_list = self.id_list[:min(20, len(self.id_list))]  # Limit to 20 samples in debug mode
+            print(f"[BIOMASSTERS DEBUG] Debug dataset size: {len(self.id_list)}")
         
         self.split_path = 'train' if split == 'val' else split
         self.dir_features = pathlib.Path(self.root_path).joinpath(f'{self.split_path}_features')

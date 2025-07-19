@@ -1,0 +1,7137 @@
+PANGAEA: A G LOBAL AND I NCLUSIVE B ENCHMARK FOR
+G EOSPATIAL F OUNDATION M ODELS
+
+arXiv:2412.04204v2 [cs.CV] 30 Apr 2025
+
+Valerio Marsocci∗,1,2 , Yuru Jia∗,2,3 , Georges Le Bellier4 , David Kerekes3 ,
+Liang Zeng2 , Sebastian Hafner3,5 , Sebastian Gerard3 ,
+Eric Brune3 , Ritu Yadav3 , Ali Shibli3 , Heng Fang3 ,
+3
+Yifang Ban , Maarten Vergauwen2 , Nicolas Audebert6,4 , Andrea Nascetti3
+2
+
+1
+ESA Φ-lab, Frascati, Italy
+Geomatics Section, Department of Civil Engineering, Faculty of Engineering Technology, KU Leuven, Ghent, Belgium
+3
+KTH - Royal Institute of Technology Stockholm, Sweden
+4
+Conservatoire national des arts et métiers, CEDRIC, F-75141 Paris, France,
+5
+University of Glasgow, Glasgow, Scotland
+6
+Univ. Gustave Eiffel, ENSG, IGN, LASTIG, F-94160 Saint-Mandé, France
+∗
+Equal contribution
+
+A BSTRACT
+Geospatial Foundation Models (GFMs) have emerged as powerful tools for extracting representations
+from Earth observation data, but their evaluation remains inconsistent and narrow. Existing works
+often evaluate on suboptimal downstream datasets and tasks, that are often too easy or too narrow,
+limiting the usefulness of the evaluations to assess the real-world applicability of GFMs. Additionally,
+there is a distinct lack of diversity in current evaluation protocols, which fail to account for the
+multiplicity of image resolutions, sensor types, and temporalities, which further complicates the
+assessment of GFM performance. In particular, most existing benchmarks are geographically
+biased towards North America and Europe, questioning the global applicability of GFMs. To
+overcome these challenges, we introduce PANGAEA, a standardized evaluation protocol that covers
+a diverse set of datasets, tasks, resolutions, sensor modalities, and temporalities. It establishes a
+robust and widely applicable benchmark for GFMs. We evaluate the most popular GFMs openly
+available on this benchmark and analyze their performance across several domains. In particular,
+we compare these models to supervised baselines (e.g. UNet and vanilla ViT), and assess their
+effectiveness when faced with limited labeled data. Our findings highlight the limitations of GFMs,
+under different scenarios, showing that they do not consistently outperform supervised models.
+PANGAEA is designed to be highly extensible, allowing for the seamless inclusion of new datasets,
+models, and tasks in future research. By releasing the evaluation code and benchmark, we aim to
+enable other researchers to replicate our experiments and build upon our work, fostering a more
+principled evaluation protocol for large pre-trained geospatial models. The code is available at
+https://github.com/VMarsocci/pangaea-bench.
+Keywords geospatial foundation models · Earth observation · evaluation benchmark · self-supervised learning
+
+1
+
+Introduction
+
+Geospatial foundation models (GFMs) have emerged as a powerful tool for extracting representations from Earth
+observation (EO) data [1, 2]. These models are trained on large-scale EO datasets and aim to capture fundamental
+geospatial features that can be leveraged for downstream tasks [3, 4]. However, the rapid development of GFMs has
+outpaced the establishment of a standardized and robust evaluation methodology.
+Current evaluation practices often rely on a limited set of downstream tasks and datasets. For example, EuroSAT
+[5] is often used to evaluate downstream performance on land cover classification, despite being virtually solved
+(MTP [6] reports > 99% accuracy) and despite the community’s shift toward segmentation-based tasks for land cover
+
+PANGAEA
+
+Figure 1: Normalized performance comparison of different models across various datasets and training conditions.
+The y-axis represents the normalized performance across the 11 PANGAEA’s datasets, where the best-performing
+model for each dataset is assigned a value of 1 and the worst-performing model is assigned a value of 0. (a) Full Labels:
+Models trained on downstream tasks with access to the full labeled dataset. We observe that supervised baselines –
+especially UNet – outperform most of the models; (b) Limited Labels (10%): Models trained on downstream tasks
+with only 10% of labeled data. In this scenario, some GFMs – e.g. CROMA – excel and outperform both other GFMs
+and supervised baselines, although still competitive; (c) Multi-Spectral Data: Results for datasets made exclusively
+of multi-spectral images, i.e. HLS Burn Scars, MADOS, PASTIS-R, Sen1Floods11, Crop Type Mapping-SS, and
+BioMassters. Multi-spectral datasets tend to use low-resolution images, on which UNet excels. GFMs trained on
+high-resolution images, e.g. Scale-MAE, underperform in this setting that requires both spatial and spectral information;
+(d) High-Resolution Data: Results for high-resolution datasets, i.e. xView2, FiveBillionPixels, DynamicEarthNet, and
+SpaceNet 7. They are made of either RGB or RGB-NIR imagery. In this setting, most GFMs pre-trained on lowerresolution imagery fall behind, except CROMA and DOFA. On the other hand, GFMs pre-trained on high-resolution
+images and UNet perform well.
+
+and land use prediction, given the real-world importance. Reported performance on such datasets is, therefore, not
+representative of the performance of GFMs across a broader range of applications. Additionally, current evaluation
+protocols often lack diversity, overlooking differences in image resolution, multiplicity of sensor types and modalities,
+geographical diversity and other factors crucial to model performance [7, 8]. For instance, the PhilEO Bench [9],
+though a valuable contribution, evaluates models only through the lens of Sentinel-2 data, limiting the breadth of the
+conclusions that can be drawn from this benchmark. In comparison, GEO-Bench [10] and SustainBench [11], include
+data from multiple sensors; however, they cover only land observations, ignore marine environments, and focus on
+mono-temporal applications. Finally, FoMo-Bench [12] and Crop Type Bench [13] restrict their scope respectively to
+forest and agriculture environments.
+This lack of a standardized comprehensive evaluation protocol poses a significant challenge for the remote sensing
+community. It limits the ability to effectively compare models, assess their operational capabilities, and identify areas
+for improvement. Consequently, researchers and practitioners struggle to make informed decisions about which GFMs
+to utilize for their specific needs. To address this critical gap, we propose PANGAEA, a global and inclusive benchmark
+for GFMs. We aim to establish a robust, standardized and broadly applicable benchmark by curating a diverse and
+comprehensive collection of downstream datasets and tasks. PANGAEA covers a wide spectrum of tasks, ranging
+from marine debris segmentation to building damage mapping through change detection. It spans multiple application
+domains, including urban, agricultural, marine, and forest environments. It also incorporates datasets with diverse
+temporal configurations (uni-temporal, bi-temporal, and multi-temporal, i.e. satellite image time series), extensive
+geographical coverage (all over the Earth), various spatial resolutions (from 1.5 m/pixel to 30 m/pixel resolution), and
+multiple sensor types, including natural colors, multi-spectral and synthetic aperture radar (SAR).
+To gain a deeper understanding of the GFM landscape, we select a set of highly representative models and put them to
+the test on PANGAEA. Specifically, our selection criteria focus on approach, impact, and reproducibility. Regarding
+the different approaches, we include models employing diverse strategies, such as multi-modal contrastive learning
+(e.g. [14]), masked image modeling (MIM) (e.g. [15]), and supervised training (e.g. [16]). With impactful contributions,
+we consider models featured in top-tier computer vision conferences, specialized journals, or recognized within the
+research community. For reproducibility, the availability of open-source code and pre-trained models is a pivotal
+2
+
+PANGAEA
+
+consideration. This comparative analysis allows us to assess the strengths and weaknesses of different models, providing
+insights and fostering advancements in the development of GFMs.
+Through the development of a standardized evaluation protocol and comprehensive benchmarking effort, we examine a
+set of key research questions:
+• Generalization across domains: How effectively do GFMs generalize to diverse downstream task domains?
+How do different model designs contribute to performance variations across these domains?
+• Comparison to supervised baselines: Do GFMs consistently beat supervised task-specific baselines?
+• Performance with limited labels: Do GFMs demonstrate tangible advantages in scenarios with limited
+labeled data?
+Our experiments yield new insights into the applicability of GFMs. Pre-training dataset characteristics, with a specific
+focus on the sensor spectral and spatial resolutions, have a significant impact on the downstream performance of
+different GFMs. GFMs pre-trained on datasets with richer spectral information or higher spatial resolutions tend to
+perform better in tasks requiring such features Fig. 1. However, while GFMs generally perform well across a wide range
+of tasks, they do not consistently outperform supervised baselines. Task-specific models, i.e. those trained end-to-end
+on the task at hand, can leverage the spectral and spatial details of the dataset more effectively. This is especially true
+when there is a notable gap between the characteristics of the pre-training dataset and the downstream dataset (e.g.
+RGB vs multi-spectral). Similar behavior has been observed in recent works, spanning from time series [17], to crop
+monitoring [13] and canopy height prediction [18]. Similar findings are also in the data scarcity scenario, where some
+GFMs excel also w.r.t. supervised baselines (Table 7), but the average performance confirms what is observed when
+much more labels are available (Fig. 1). Finally, we observe no strong downstream performance advantage between
+a frozen encoder and end-to-end fine-tuning. While fine-tuning does improve performance in some cases, this is not
+systematic. The impact of fine-tuning depends on the GFM’s architecture and the type of downstream task. Many other
+factors were tested in several ablations studies, ranging from the impact of normalization to hyperparameter fine-tuning.
+In addition to evaluating model performance, PANGAEA emphasizes the importance of results reproducibility. By
+releasing the full evaluation code alongside our proposed benchmark, we ensure that other researchers can replicate our
+experiments and compare models transparently thanks to an efficient and robust evaluation protocol. This reproducibility
+fosters greater transparency and collaboration within the research community, promoting trust and consistency in GFM
+evaluations. Our benchmark is designed to be extensible and modular, enabling the easy inclusion of additional datasets,
+tasks, and models in future research. This flexibility ensures that the benchmark remains adaptable to the evolving
+needs of the remote sensing community, accommodating new sensor types, more complex tasks, and emerging model
+architectures.
+
+Figure 2: PANGAEA aims for robust evaluation across diverse downstream datasets and applications.
+In summary, our contributions are as follows:
+3
+
+PANGAEA
+
+• Open-source codebase for reproducible and transparent benchmarking. We provide an easy-to-use and robust
+evaluation protocol, to ensure comparability among different GFMs pre-trained under varying conditions.
+• Diverse benchmark covering a wide range of datasets, tasks, and sensor types, fostering a more comprehensive
+evaluation of GFMs.
+• Highlighting the gaps in current GFM capabilities and showcasing the potential for future advancements in
+model generalization, task specialization, and fine-tuning strategies.
+By establishing this framework illustrated in Fig. 2, we aim to facilitate a comprehensive and robust benchmark
+evaluation, making it easier to understand and analyze the performance and generalization capabilities of newly
+developed GFMs.
+
+2
+
+Related Work
+
+2.1
+
+Datasets for Earth Observation
+
+In recent years, the availability of geospatial and EO datasets has expanded significantly, motivating systematic efforts
+to catalog and organize them [19, 20]. These datasets can be classified according to various criteria, including task,
+modality, geographic region, domain, and temporality. From a task-based perspective, research has branched into
+distinct areas, from scene classification to pixel-level regression.
+Scene classification, often focusing on land use or land cover (LULC), is one of the most prevalent tasks due
+to its alignment with computer vision methodologies. Early examples include UC-Merced [21] and WHU-RS19
+[22, 23], which consist of high-resolution RGB imagery. MillionAID [24, 25] is among the largest datasets in this
+category. Beyond RGB images, some datasets like EuroSAT [5] rely on Sentinel-2 images, while BigEarthNet [26, 27]
+incorporates both Sentinel-1 and Sentinel-2 data while introducing a multi-label classification task. Beyond LULC
+scene classification, many specialized datasets address specific tasks with domain-specific annotations. For example,
+METER-ML [28] is designed for methane source mapping, CV4A Kenya [29] for crop type identification, BrazilDAM
+[30] for dam detection, and ForestNet [31] for deforestation driver classification. We do not include classification
+tasks in PANGAEA, despite these tasks being widespread in academic datasets, because patch-level classification is
+often unsuitable for real-world geospatial tasks. Indeed, patch-level predictions lose critical spatial detail and fail to
+provide the dense information required for real-world applications. This has been the main driver of the community
+shift towards dense classification.
+In addition to classification, object detection in EO imagery has gained considerable attention. This task involves
+locating and identifying specific objects, such as airplanes or ships, with applications closely tied to the annotated object
+categories. Notable datasets in this domain include Functional Map of the World (fMoW) [32], a high-resolution global
+dataset with 62 object categories; DIOR [33], a large-scale 20-classes multi-resolution object detection benchmark; and
+DOTA [34] and iSAID [35], which are curated to include many small-size objects and unbalanced classes. Furthermore,
+specialized datasets cater to specific object categories, e.g. to detect ships [36, 37, 38], oil storage tanks [39] and
+vehicles [40, 41]. To date, object detection in EO doesn’t have a universally established protocol for annotation and
+for robustly using the GFM features; additionally, semantic segmentation often achieves similar results by providing
+pixel-level information that can be aggregated to detect and delineate objects more flexibly. For this reason, we didn’t
+include object detection in PANGAEA, following the same approach as in other benchmarks [10].
+Semantic segmentation is another common task in EO image analysis. Unlike classification task which focuses
+on image-level labels, segmentation aims at assigning labels at the pixel level. This dense labeling is essential to
+produce higher-resolution semantic maps. Several notable semantic segmentation datasets exist for LULC classes.
+ISPRS 2D Vaihingen and Potsdam [42] provide an early example of multi-modal data for semantic segmentation.
+However, the community has moved towards datasets that capture multiple areas of interest, such as LoveDA [43] and
+Five-Billion Pixels [44], which consider aerial and Gaofen-2 satellite imagery respectively, covering several Chinese
+cities. DeepGlobe [45] is notable as one of the first global-scale semantic segmentation for LULC. FLAIR-1 [46]
+integrates temporal and spectral information from optical satellite time series to capture the diverse landscapes of France.
+Beyond land cover mapping, semantic segmentation datasets also tackle specialized applications, such as cloud cover
+segmentation [47, 48, 49], building footprint segmentation [50, 51], agricultural parcel mapping [52, 53], and beyond.
+Another important EO analysis task is change detection, which extends single image classification to multiple
+acquisitions to identify and map alterations in the Earth’s surface over time. This technique is crucial in applications
+such as monitoring floods [54], tracking urban development [55, 56], and assessing the impacts of natural disasters
+[57, 58]. Change detection is most often addressed as a classification or segmentation problem, taking 2 or more images
+as inputs. Among change detection datasets, SZTAKI AirChange [59] is an early example focused on identifying
+significant changes in aerial image pairs taken years apart and across seasons. SECOND [60] consists of multi-temporal
+4
+
+PANGAEA
+
+aerial images with pixel-level labels for land-cover variations and semantic change types. OSCD [61] includes multispectral Sentinel-2 images of various global cities for urban changes, while Levir-CD [56] is a very high-resolution
+(VHR) dataset designed for building change detection.
+Beyond the aforementioned tasks, regression tasks are also becoming increasingly prominent in EO analysis, especially
+in estimating biophysical indicators from remote sensing imagery. Patch-level regression datasets like SatBird [62], for
+bird species distribution modeling, and ClimSim [63], for climate forecasting, showcase the diverse applications in this
+domain. Similarly, pixel-level regression tasks are explored by datasets such as BioMassters [64] for above-ground
+forest biomass estimation, and 3DCD [65, 66] for elevation change prediction.
+Some useful references for a comprehensive list of currently available datasets include [19, 20], along with resources
+like the Satellite Image Deep Learning Datasets repository1 and the IEEE GRSS Earth Observation Dataset Search2 .
+2.2
+
+Geospatial Foundation Models
+
+About the Naming "Geospatial Foundation Models" refer to large-scale, self-supervised pre-trained deep learning
+models specifically designed to process and analyze geospatial data [67]. Instead of targeting specific tasks and datasets,
+GFMs should aim to support a wide array of downstream applications by training on large amounts of data and
+leveraging their learned representations to generalize across various domains.
+These large pre-trained geospatial models deviate from the standard vision-language foundation models from computer
+vision and NLP, such as CLIP [68] and LLaVa [69], in several key aspects. First, vision-language models are multimodal and integrate texts and images across diverse contexts. In comparison, large pre-trained geospatial models mainly
+rely on satellite imagery as their primary modality and more rarely incorporate other modalities, especially metadata or
+text. Self-supervised models for geospatial data are mostly limited to a single image modality, and scarcely consider
+vector data or temporal information. Second, vision-based modalities in geospatial are dominated by multi-spectral
+and SAR imagery. Broader integration of geospatial data remains underdeveloped, with little sensor diversity in
+the pre-training datasets. This is in part due to the unique challenges of geospatial data, especially size – ESA’s
+Copernicus archives alone contain over 66 petabytes of satellite data as of 2024 – and non-stationarity, with significant
+variability across geographic regions, sensors, and time. This combination of incomplete multi-modal integration and
+non-stationary data distribution further complicates the development of robust, generalizable geospatial models. Third,
+most “geospatial foundation models” are yet to compete with their classical counterparts, both in parameter count and
+in pre-training data size. As shown in Tables 3 and 4, the largest currently available “geospatial foundation models”
+are CROMA [14] and Scale-MAE [15], with ≈ 350M parameters, which is smaller than the largest CLIP (ViT-L/14,
+≈430M parameters). The commonly used LAION-5B dataset [70] is comprised of more than 5 billion images with an
+on-disk size greater than 200TB, compared to the 1TB of Prithvi [71] or 30TB of Satlas [16].
+These limitations are closely tied to issues with generalization. Many geospatial models are tested primarily on narrow
+tasks and datasets, leaving their ability to handle domain shifts—such as varying geographic regions, sensors, or
+temporal conditions—largely unexplored. The term “geospatial foundation model” is increasingly used in the remote
+sensing community, although still inconsistently. Some models still refer to themselves as large self-supervised models,
+although they are evaluated on downstream tasks for their representation abilities. In this work, we unify all these
+models under the same umbrella of “geospatial foundation models" for simplification. Nonetheless, it is important to
+recognize that significant gaps remain to achieve parity with vision-language foundation models, especially regarding
+multi-modal integration, generalization, and robustness. These challenges must be addressed for these models to fully
+realize the potential implied by the “foundation model ” denomination.
+In this section, we review these general-purpose models, including those not explicitly labeled as “foundation models”
+but that have still been developed to address various downstream applications.
+Geospatial Foundation Models The GFM framework has advanced significantly through both supervised and
+unsupervised approaches for visual tasks. A prominent example of a supervised model is SatlasNet [16], which employs
+a Swin Transformer backbone trained on a large annotated dataset with seven label types. However, full supervision
+requires extensive expert annotations, which are time-consuming and costly. Given the vast quantities of EO data and
+the expense of labels, many GFMs now adopt self-supervised learning (SSL) to learn representative features without
+labeled supervision. Studies have shown that SSL can enhance downstream performance on diverse tasks [72, 73].
+Among the first attempts, SSL4EO-L [74] and SSL4EO-S12 [75] introduce globally distributed datasets based on
+Landsat-8 and Sentinel-1/2 imagery, respectively. These datasets have been used to train various off-the-shelf computer
+vision models, such as masked autoencoders (MAE) [76], data2vec [77], DINO [78], and MoCo [79].
+1
+2
+
+https://github.com/satellite-image-deep-learning/datasets
+https://eod-grss-ieee.com/dataset-search
+
+5
+
+PANGAEA
+
+Within the SSL framework, several works [80, 81, 82] focus on the techniques of masked image modeling (MIM),
+which first masks a proportion of the image and then learn to reconstruct masked parts. RingMO [83] falls into this
+category and was one of the first to mention "foundation models" in the title explicitly. RingMo-Sense [84] and
+RingMo-SAM [85] extend it, respectively making use of spatiotemporal evolution disentangling for spatiotemporal
+prediction tasks and segment anything model (SAM) [86] for image segmentation tasks. CtxMIM [87] combines a MIM
+approach with a Siamese network to give better context to the feature extractor. GFM [88]3 proposes a continual pretraining strategy using MIM. msGFM [89] extends it, including multi-sensor images through a conditional computation
+approach (i.e. MoE). SatMAE [90] was one of the first frameworks based on masked autoencoders (MAE) [76] to
+tackle EO peculiarities, including multi-spectral and spatiotemporal location embeddings. SatMAE++ [91] enhances it
+through multi-level feature extraction. Cross-scale MAE [92], also enforces cross-scale consistency through contrastive
+and generative losses. Scale-MAE [15] introduces resolution-aware positional encodings to learn features at different
+scales. USat [93] modifies the patch projection layers by embedding each spectral band separately before feeding
+them into MAE. RVSA [94] adapts the original full attention in MAE blocks with rotated varied-size window attention.
+FG-MAE [95] learns to reconstruct the image features instead of reconstructing the raw pixels. SatVision-TOA [96] is
+an MIM, trained on MODIS data.
+Leveraging the MAE approach, some research has been oriented toward directly dealing with multi-modality characteristics of EO data [97, 98]. Prithvi [71] includes 3D positional embedding and 3D patch embedding modifications to
+learn from massive Harmonized Landsat-Sentinel (HLS) multi-temporal data. OmniSAT [99] proposes a multi-modality
+fusion technique by including spatially aligned VHR images and optical and SAR time series. SpectralGPT [100]
+extends MAEs to hyperspectral data. DOFA [101] leverages wavelength as a unifying parameter across various EO
+modalities to achieve a multi-modal representation. MMEarth [102] utilizes 12 modalities including pixel-level and
+image-level modalities as a pretext task for MAE reconstruction to learn representations for Sentinel-2 images. PRESTO
+[103] operates on pixel time series data and learns to reconstruct data when bands or timesteps are incomplete.
+Another line of work investigates contrastive learning [104], which captures the relationships within the data by
+contrasting similar and dissimilar data points. GASSL [105] leverages spatially aligned images over time to construct
+temporal positive pairs, while SeCo [106] and CACo [107] model also the seasonality. MATTERS [108] learns
+invariance to illumination and viewing angle to achieve consistency in material and texture representation. SkySense
+[109] encodes multi-modal temporal remote sensing imagery and utilizes contrastive learning to learn features at various
+levels of granularities. CROMA [110] combines contrastive learning and MAE with aligned radar and optical images
+to learn both unimodal and multi-modal representations. GeRSP [111] combines contrastive learning and supervised
+learning to learn from unlabeled remote sensing imagery and labeled natural images jointly. Swim-diff [112] introduces
+a scene-wide matching approach that combines contrastive learning with diffusion models.
+As part of the SSL learning paradigm, various studies have examined self-distillation based approaches, like in the
+DINO [78], where two different views are fed into two encoders, known as the student and the teacher, and the student
+learns to predict the teacher’s output. For example, DINO-MM [113] takes concatenated SAR-optical images as raw
+inputs and feeds the transformed augmented views to the student-teacher network. X-STARS [114] adds a cross-sensor
+alignment objective based on the DINO framework, for both pre-training from scratch and continual pre-training.
+There are also works [6, 115, 116, 117, 118, 119] contributing to the importance of different pre-training steps. For
+instance, MTP [6] conducts a multi-task pre-training pipeline that supports both convolutional neural networks and
+vision transformer foundation models. DeCUR [120] decouples representations, distinguishing inter and intra-modal
+embeddings based on Barlow Twins [117], while RSMamba dense [118] and RSMamba [119] are two approaches
+based on Mamba [121], using selective state spaces. [122] surveys models and trends in vision-language modeling,
+where RemoteCLIP [123] was one of the first vision-language foundation models to learn aligned text embeddings and
+visual features for remote sensing. Other works explored the use of large language models (LLMs) for spatio-temporal
+modeling and prediction tasks [124, 125]. In addition, generative foundation models have also advanced within the EO
+field, examples include DiffusionSAT [126], CRS-Diff [127] and MetaEarth [128], which generate realistic EO images
+all over the Earth based on the diffusion models.
+Specialized Geospatial Foundation Models’ Applications Some models, though oriented to one specific domain,
+share some common characteristics with general-purpose GFMs. FoMo-Net [12] is shaped to solve any forest monitoring
+task based on the MAE framework. Hydro-FM 4 is a foundation model trained to solve water-related tasks. CSMAE
+[129] focuses on sensor-agnostic image retrieval for remote sensing. Concerning SAR images, several models were
+considered precursors for strong GFMs, based on different approaches like MAEs [130], self-distillation [131], and
+DINO [132]. Other works focus on more narrow aspects of GFMs, such as optimizing high-performance computing
+(HPC) performance [133, 134]. Research is also progressing on parameter-efficient fine-tuning (PEFT) methods
+3
+4
+
+Which we will refer to as GFM-Swin in this paper to disambiguate from the general term GFM.
+https://github.com/isaaccorley/hydro-foundation-model
+
+6
+
+PANGAEA
+
+[135, 136, 137, 138]. Finally, various studies employ pre-trained GFMs for specialized applications, including, transfer
+learning [110], parameter forecasting [139], radar image target recognition [140], disaster management [141], image
+classification [142], domain generalization [143], [141], and building segmentation [144].
+
+2.3
+
+Benchmarks in Geospatial Tasks
+
+The emergence of GFMs has further driven the development of benchmarks designed to evaluate model performance
+across various tasks; while several valuable benchmarks have been proposed in recent years, they still exhibit certain
+limitations. A key issue is that many of these benchmarks focus on highly specific domains, making them valuable for
+targeting specific performance metrics but limiting their applicability from a more generalist perspective.
+For example, PhilEO Bench [9] proposed a benchmark dataset comprising Sentinel-2 images, annotated for three
+downstream semantic segmentation tasks: building density estimation, road segmentation, and land cover classification.
+FoMo-Bench [145] targets forest monitoring with datasets covering classification, segmentation, and detection tasks,
+whereas [13] focuses on agriculture, selecting six crop classification datasets sourced from five continents.
+Other benchmarks, however, overlook certain critical tasks (e.g. change detection) and fail to account for a pivotal
+characteristic of EO data: multi-temporality. For instance, EarthNets [19] provides a benchmark after analyzing
+published datasets, including fMoW [32] and BigEarthNet [27] for classification; DIOR [33] and fMoW [32] for object
+detection; and GeoNRW [146] and SEASONET [147] for semantic segmentation. While these datasets contribute
+valuable benchmarks for various tasks, they overlook the temporal aspect that is crucial for many geospatial models.
+Also, GEO-Bench [10] adapts and curates six classification and six segmentation datasets with diverse modalities and
+spatial resolutions, yet still does not fully incorporate the temporal dimension of EO data. Finally, SustainBench [11],
+though one of the most comprehensive benchmarks, focusing on 15 public datasets across 7 Sustainable Development
+Goals (SDGs) and addressing tasks such as economic development, agriculture, health, education, water and sanitation,
+climate action, and biodiversity, still lacks other important vision modalities, such as Synthetic Aperture Radar (SAR)
+in addition to optical imagery. These considerations are summarized in Table 1, highlighting differences in application
+domains, tasks, modalities, and temporalities.
+
+Table 1: Comparison of the PANGAEA Benchmark with existing geospatial vision benchmarks. We categorized each
+benchmark by domain (LULC stands for Land Use and Land Cover; SDG for Sustainable Development Goals; Agri for
+Agricultural), tasks (classification, semantic segmentation, object detection, and regression), modality and temporality.
+Benchmark
+
+Domain
+
+Tasks
+
+Modality
+
+Temporality
+
+EarthNets
+SustainBench
+GEO-Bench
+PhilEO Bench
+FoMO Bench
+
+LULC
+SDG
+Urban, Agri, Forest
+Urban
+Forest
+
+Class, SemSeg, OD
+Class, SemSeg, Regr
+Class, SemSeg
+SemSeg
+Class, SemSeg, OD
+
+MSI
+MSI, StreetView
+MSI, SAR, DSM
+MSI
+MSI
+
+Single
+Multi
+Single
+Single
+Multi
+
+PANGAEA
+
+Urban, Agri, Forest
+Marine, Disaster
+
+SemSeg, CD, Regr
+
+MSI, SAR
+
+Multi
+
+Several benchmarks also evaluate vision-language models (VLMs) for EO applications. For example, VRSBench [148]
+datasets set a benchmark for image captioning, visual grounding, and visual question answering using remote sensing
+images with paired captions, object references, and question-answers. UrBench [149] evaluates multi-modal capabilities
+in urban environments, with questions spanning geo-localization, scene understanding, and object understanding.
+VLEO-Bench [150] presents 11 real-world scenarios to test VLMs’ abilities in scene understanding, localization and
+counting, and change detection. However, evaluating VLMs falls outside the scope of this work. Our benchmark
+focuses on dense-label tasks crucial for fine-grained spatial understanding, whereas vision-language tasks often center
+around image captioning, high-level scene interpretation, or object recognition, which differ from the dense prediction
+tasks we emphasize.
+In the next section, we outline the parameters we have selected to evaluate the significance of a benchmark and describe
+the methodology we employed to identify the most effective one.
+7
+
+PANGAEA
+
+Table 2: Datasets included in the PANGAEA benchmark, highlighting their domains, tasks, sensor types, geographic
+coverage and temporality. This selection ensures diverse evaluation of GFMs across a wide range of applications.
+Dataset
+
+Domain
+
+Task
+
+Sensors
+
+Location
+
+Dates
+
+HLS Burn Scars [71]
+MADOS [151]
+PASTIS-R [53, 152]
+Sen1Floods11 [153]
+xView2 [57, 58]
+Five Billion Pixels [154]
+DynamicEarthNet [55]
+Crop Type Mapping-SS [11, 155]
+SpaceNet 7 [51]
+AI4SmallFarms [156]
+BioMassters [64]
+
+Wildfire
+Marine
+Agriculture
+Flood
+HADR
+(Urban) Land Cover
+(Urban) Land Cover
+Agriculture
+Urban
+Agriculture
+Forest
+
+Segmentation
+Segmentation
+Segmentation
+Segmentation
+Change det.
+Segmentation
+Segmentation
+Segmentation
+Change det.
+Segmentation
+Regression
+
+HLS
+S2
+S1, S2, SPOT-6
+S1, S2
+Maxar
+Gaofen-2
+PlanetFusion
+S1, S2, Planet
+Planet
+S2
+S1, S2
+
+USA
+Global
+France
+Global
+Global
+China
+Global
+South Sudan
+Global
+Southeast Asia
+Finland
+
+Mono
+Mono
+Multi
+Mono
+Bi
+Mono
+Mono
+Multi
+Bi
+Mono
+Multi
+
+3
+
+The PANGAEA Benchmark
+
+3.1
+
+Datasets Selection
+
+To establish a new-generation benchmark aligned with real-world applications across diverse scenarios, we select
+datasets based on five key parameters: i) application domain, ii) type of task, iii) multi-modality, iv) temporality,
+and v) geographical diversity.
+Evaluating the effectiveness of vision GFMs requires assessing their performance across diverse application domains
+to understand their adaptability and generalization capabilities. Each domain presents unique challenges: models
+pre-trained on agricultural datasets may perform well in crop classification but struggle with marine tasks like pollutant
+detection, while those optimized for urban environments may underperform in rural or forested areas. To identify
+a model’s generalization ability and versatility, it is essential to consider datasets tailored to various domains. For
+instance, datasets such as SpaceNet 7 [51] and DynamicEarthNet [55] are used for tasks like urban land cover or
+building footprint segmentation. Crop Type Mapping-South Sudan [52] (referred to as Crop Type Mapping-SS) and
+PASTIS-R [152, 53] are employed to identify and map crop types in agricultural landscapes. Datasets like MADOS
+[151] and BioMassters [64] [157] support the development of models for tasks in marine and forest environments. For
+natural disaster damage assessment, datasets such as xView2 [57] and Sen1Floods11 [158] are invaluable, addressing
+scenarios from earthquakes to floods. In addition, it is essential to assess the versatility of models not only across
+
+Figure 3: Geographical distribution of PANGAEA benchmark dataset across different domains.
+domains but also across downstream tasks. For example, within the urban domain, GFMs optimized for semantic
+segmentation of land cover may struggle with change detection (e.g. building damage assessment) or regression tasks
+(e.g. building height estimation). To address this, we include a diverse set of downstream tasks, including semantic
+8
+
+PANGAEA
+
+segmentation, change detection, and regression tasks, with a focus on dense, pixel-wise problems that hold significant
+real-world relevance in remote sensing. As previously stated, we exclude classification tasks, as they are less relevant
+for real-world application, as also shown by the community shift towards more dense tasks. We also excluded object
+detection, following other benchmarks [10], for two main reasons: there is no consensus on how to evaluate GFMs for
+detection, making it out of scope for the moment; dense tasks like semantic segmentation can achieve similar real-world
+results (i.e. segmenting one class).
+Another key consideration in shaping the benchmark is incorporating multi-modality (i.e. data from different sensors
+or sources such as LiDAR, SAR, optical, or text). Different satellites are equipped with sensors of varying resolutions
+and spectral properties. Incorporating multi-modal datasets ensures the benchmark evaluates a GFM’s ability to adapt
+to diverse sensing conditions, enhancing robustness for real-world applications. Currently, we focus on optical and
+SAR modalities due to the limited availability of datasets for other modalities, such as hyperspectral data.
+EO data is inherently multi-temporal (i.e. data from the same location captured at different timeframes). However, not
+all models leverage this dimension. Temporal information is crucial for tasks such as biomass tracking, urban expansion
+monitoring, and seasonal crop assessment. Evaluating GFMs on temporal data provides a more comprehensive
+assessment of their capabilities to determine whether these models can interpret dynamic processes.
+Finally, concerning geographic diversity, [20] reports that, in their vast sampling of the available EO datasets, only
+25% cover locations all over the world and almost 40% of the available datasets focus on "first-world countries"
+(Europe 21% and North America 18%). Asia is covered by 10% of the datasets, while Africa (5%), South America
+(4%), and Australia (1%) are significantly underrepresented. Many GFMs perform poorly in underrepresented regions
+such as Africa or Southeast Asia, due to biases in the pre-training datasets. By building a geographically diverse
+dataset selection on a global scale, we aim to alleviate the biases in the evaluation datasets, thus enabling more robust
+assessments of models and their susceptibility to pre-training biases.
+To evaluate GFM across all these dimensions, we curate a diverse and comprehensive set of datasets to compose the
+PANGAEA benchmark, spanning various domains, tasks, locations, temporalities, and satellite sources, detailed in
+Table 2. We include PASTIS-R [152, 53] and AI4SmallFarms [156] ensuring that the benchmark evaluates models on
+the high-impact applications that are crop mapping and field boundary segmentation, across different regions, leveraging
+different modalities (i.e. Sentinel-1 and Sentinel-2) and multi-temporal data. The inclusion of MADOS [151] in the
+marine domain adds a global perspective on marine pollutant mapping, addressing worldwide environmental challenges.
+Disaster mapping datasets like xView2 [57], Sen1Floods11 [153], and HLS Burn Scars [71] test GFMs’ abilities to
+detect and respond to sudden changes, such as natural disasters, across various global locations and temporalities.
+Datasets such as SpaceNet 7 [51] and DynamicEarthNet [55] challenge models with tasks like urban change detection
+and multi-temporal land cover analysis, ensuring robustness in dynamic urban and land cover scenarios. In the forest
+domain, BioMassters [64] provides a multi-modal, multi-temporal dataset for forest biomass estimation, a critical
+task for monitoring forest health and carbon sequestration. By incorporating BioMassters, we also add robust and
+long-overdue evaluation of GFMs on regression tasks. Geographic diversity is further enhanced by datasets such as Five
+Billion Pixels [44] and AI4SmallFarms [156] (Asia), as well as Crop Type Mapping-SS [11, 155] (Africa), ensuring
+that the benchmark evaluates GFMs in underrepresented regions with diverse satellite data, including Gaofen and
+Sentinel-1/2. The spatial distribution of the PANGAEA benchmark datasets across domains is shown in Fig. 3.
+This extensive coverage of PANGAEA across domains, tasks, modalities, temporalities, and locations ensures that
+the benchmark is robust, enabling a thorough evaluation of model generalizability, adaptability, and performance in
+real-world remote sensing applications.
+
+3.2
+
+Models Selection
+
+To efficiently benchmark the performance of different GFMs, PANGAEA includes nine models selected based on three
+criteria: reproducibility, approach and impact. The models are listed alphabetically in Table 3, along with their
+corresponding image sources and the data volume used for pre-training.
+To ensure reproducibility, we require each model to have open-source code and publicly available weights. With this
+condition met, we select a diverse set of models, each representing a unique approach to highlighting their strengths in
+remote sensing and geospatial analysis.
+SSL4EO-S12 [74] is selected as a GFM baseline. This includes four vision-transformer (ViT)-based models, each
+pre-trained with different self-supervised learning approaches, such as masked image modeling (S12-MAE), contrastive
+learning (S12-MoCo) and knowledge distillation (S12-DINO, S12-Data2Vec). Since these models employ original
+computer vision (CV) algorithms without EO-specific modifications but are pre-trained on large-scale remote sensing
+9
+
+PANGAEA
+
+imagery, they serve as a baseline to provide insights into the performance of CV models without adjustments for the
+peculiarities of EO data.
+Table 3: Overview of the pretraining datasets and the number of patches used by the selected GFMs. For Prithvi, the
+data volume is reported.
+Model
+
+Pretraining Images
+
+Patches/Volume
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+SSL4EO-S12
+
+Sentinel-1, Sentinel-2
+Sentinel-1, Sentinel2, Gaofen-2, NAIP, EnMAP
+NAIP, RSD46-WHU, MLRSNet, RESISC45, PatternNet
+Harmonized Landsat Sentinel-2 (HLS)
+SEG-4, DET-10, RET-3
+Sentinel-2, NAIP
+FMoW-RGB
+fMoW-S2, BigEarthNet
+Sentinel-1, Sentinel-2
+
+3M
+8.08M
+600K
+1TB
+165K
+856K
+363.6K
+1.47M
+3M
+
+Table 4: Complexity of the selected GFMs. Please consider that all models include a UPerNet [159] decoder, except
+UNet [160] which uses its original decoder.
+
+Baselines
+
+Foundation models
+
+Model
+
+Complexity (GMacs)
+
+Trainable Params (M)
+
+Total Params (M)
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+139.23
+65.02
+19.05
+64.85
+17.57
+16.70
+103.77
+380.69
+46.90
+47.93
+46.90
+46.89
+
+46.95
+39.35
+33.71
+39.34
+39.35
+33.25
+46.95
+164.40
+30.89
+30.89
+30.89
+30.89
+
+350.0
+150.9
+120.4
+125.7
+16.8
+121.2
+350.1
+249.8
+53.5
+53.5
+53.5
+53.5
+
+UNet
+ViT-B/16
+
+27.38
+64.74
+
+14.79
+125.1
+
+14.79
+125.1
+
+Several models are selected based on the widespread masked image modeling framework, each with a different focus.
+Scale-MAE [15] is included for its ability to handle input images under varying resolutions, demonstrating strong
+performance and widespread applicability. SpectralGPT [100] is selected due to its explicit design for spectral satellite
+images, addressing the unique characteristics of spectral data. Similarly, to effectively deal with spectral bands, DOFA
+[101] employs a dynamic network weights generator based on the central wavelengths of each spectral band, allowing
+generalization to different modalities Prithvi [71] has made a significant impact by training an MAE on NASA’s
+massive Harmonized Landsat Sentinel-2 (HLS) data. It is also one of the few models to incorporate the temporal
+dimension in its pre-training strategy, expanding the 2D MAE to a 3D version to utilize 3D spatiotemporal data. Among
+other MIM models, we select GFM-Swin [161], which leverages multi-modality data for its pre-training to also learn
+the cross-sensor reconstruction.
+In addition to MIM-based approaches, we also include models that employ contrastive learning strategies. While the
+former methods are faster to train, several studies [114, 161] demonstrate the advantages of contrastive learning which
+relies less on large quantities of high-resolution images and more on auxiliary data, such as text or additional modalities.
+In this context, RemoteCLIP [162] and CROMA [14] are included. RemoteCLIP is trained to align vision-language
+representations and learns robust visual features with rich semantics of satellite imagery visual concepts. CROMA,
+on the other hand, aligns geographically and temporally matched radar and optical image pairs while also combining
+unimodality MIM training objectives, making it a valuable inclusion.
+Furthermore, SatlasNet [16], one of the few GFMs based on fully supervised learning, is included to demonstrate the
+potential and limitations of this approach in geospatial tasks.
+10
+
+PANGAEA
+
+By including these models in PANGAEA, we aim to investigate how different model designs contribute to variations
+in performance across various tasks and conditions and determine which strategies are best suited for advancing the
+field of geospatial analysis. The pre-training data sources leveraged by GFMs play a key role in achieving robust
+representations for geospatial applications. This factor is considered in Table 3, which showcases the data sources and
+scales utilized by the selected models in PANGAEA, serving as a critical aspect in evaluating the capabilities of these
+GFMs.
+
+4
+
+Experimental Protocol
+
+PANGAEA aims to extensively evaluate GFMs more robustly by introducing a standardized evaluation protocol on the
+11 benchmark datasets. To do so, we integrate all selected models and datasets, alongside task-specific fine-tuning and
+evaluation code into a unified framework. The protocol incorporates standardized approaches to ensure compatibility
+between downstream tasks and models, such as consistent band adaptation alongside multi-modal and multi-temporal
+evaluation strategies.
+GFM Evaluation on Downstream Task As commonly done to evaluate self-supervised models [15, 75], we evaluate
+the representation abilities of the models using frozen encoders. We treat the encoders of various foundation models as
+feature extractors by freezing their pre-trained weights. Because PANGAEA relies on dense pixel-level tasks and not
+all GFM encoders produce dense features, we then plug a trainable decoder to upsample the features to match the input
+image resolution. This decoder performs either regression or pixel-level classification depending on the task. Following
+existing works that evaluate GFM on dense tasks [15, 100], we implement a UPerNet [159] decoder, that takes as input
+four intermediate feature levels from the foundation model encoders, as shown in Fig. 4a. We select features from
+evenly spaced layers depending on the specific GFM architecture. The decoder is then trained on the datasets under
+various scenarios, including fine-tuning with limited labeled data (10%, 50%, and 100% of each dataset). We compare
+these fine-tuned GFMs against two common fully supervised baselines: a UNet [160], representing a convolutional
+neural network backbone, and a Vision Transformer [163], representing a transformer backbone (ViT-B/16). Both these
+baselines are trained from scratch using all available bands from the downstream dataset.
+Based on this evaluation protocol, we compute the complexity and parameter count for each model, as shown in Table 4.
+These metrics provide insights into model size and computational efficiency, helping to assess the trade-offs between
+performance and resource requirements.
+Data Preprocessing All models are trained using the same preprocessed dataset. Because different foundation models
+expect different image sizes, we either crop (for larger images) or resize (for smaller images) the input images as
+needed. We normalize the images by removing the mean and dividing by the standard deviation, computed for each
+band across every dataset. This ensures consistent scaling across all images from every dataset. In data-scarce scenarios,
+we implement stratified sampling to preserve the overall distribution of the dataset. For segmentation tasks, we first
+calculate the category distributions for the dataset, organizing samples into bins that represent unique combinations of
+category proportions. By grouping samples into these bins, we can then draw a proportionate number (e.g. 10%, 50%)
+of samples from each bin, ensuring that the original category distribution is maintained. For regression, the mean value
+of each image is computed and binned into intervals, enabling proportional sampling from each bin.
+Bands Matching and Adaptation Foundation models are pre-trained on diverse sensors and spectral bands, which
+often do not align precisely with those available in downstream datasets (e.g. a GFM trained on RGB images cannot
+directly process multi-spectral Sentinel-2 imagery). To address this, we adopt a common band adaptation strategy
+for all models. If the bands used to pre-train the GFM are included in bands from the downstream dataset, then we
+match those. For example, GFMs trained on RGB imagery will only use the red, green and blue bands from datasets
+like PASTIS-R, which is comprised of Sentinel-2 images. If certain bands are unavailable in the dataset, we apply
+zero-padding for those missing bands, as proposed by [164]. For example, GFMs trained on Sentinel-2 data are still
+evaluated on RGB-only datasets, such as xView2 (which uses color imagery from Maxar), however the missing bands
+are filled with zeros.
+This strategy also enables the models to address multi-modal data by ensuring band matching across all sensor modalities.
+Among the selected models, only CROMA and DOFA can jointly handle optical and SAR data. We experiment with
+these two models using either unimodal data or both modalities for datasets containing both optical and SAR images.
+Multi-temporal Strategy Although we have selected multi-temporal datasets as downstream tasks, not all considered
+GFMs have the capability to handle image time series. In our selection, only SatlasNet and Prithvi natively handle
+temporal information. SatlasNet employs a dedicated aggregation network that processes individual images through a
+11
+
+PANGAEA
+
+shared encoder and aggregates features via a pooling strategy. Prithvi incorporates the temporal dimension directly within
+its patch embedding process. For these models, we directly feed the decoder with the multi-temporal representations
+extracted from the encoder. As illustrated in Fig. 4b, for bi-temporal datasets such as change detection, we pass both
+images to the same GFM encoder and then concatenate the features before passing them to the UperNet decoder. To
+enable models that only handle single images to be trained on multi-temporal datasets, we introduce and compare two
+feature aggregation strategies: a naive linear mapping and a lightweight spatial-temporal encoder (L-TAE) [165]. For
+models supporting only single-timeframe input, each image in the time series from the multi-temporal dataset is passed
+independently through the encoder. The linear mapping then applies a layer to compress features across the temporal
+dimension, while L-TAE uses a temporal attention module to capture relationships between frames over time. The
+temporally aggregated features are then fed through the UPerNet decoder as before, as shown in Fig. 4c.
+
+(a) single temporal
+
+(b) bi-temporal
+
+(c) multi-temporal
+
+Figure 4: Fine-tuning strategies of the foundation models depending on the input temporality.
+Hyperparameters For a fair comparison across models, the decoder is fine-tuned with an identical set of hyperparameters. For every model and dataset combination, the decoder is fine-tuned for 80 epochs using the Adam optimizer
+with an initial learning rate of 1e-4, a batch size of 8, and a weight decay of 0.05. The learning is decreased by a factor
+of 0.1 using a multi-step schedule at 60% and 90% of the training. Some specific edge cases are detailed in Appendix A
+for runs that necessitate adjustments due to memory constraints. The best-performing checkpoint on the validation set
+is kept and used to evaluate the model on the test set. For evaluation, to process larger images, we employ a sliding
+window inference strategy, dividing the input image into evenly distributed smaller crops. A stride is used to ensure the
+crops collectively cover the entire image with the fewest patches, and the overlapping areas are averaged.
+
+5
+
+Experimental Results
+
+The code to reproduce the results is available at https://github.com/VMarsocci/pangaea-bench.
+5.1
+
+Main Comparison
+
+Table 5 presents the experimental results of GFM evaluation using the full dataset across all 11 benchmark datasets,
+listed alphabetically. For multi-temporal datasets, the reported results reflect the use of the L-TAE feature aggregation,
+except for a few models that inherently support multi-temporal data. We include two fully supervised baselines for
+comparison, UNet and ViT, trained from scratch in an end-to-end manner without any pre-trained weights. These results
+provide valuable insights from multiple perspectives. Extended results are presented in Appendix A.
+Impact of Resolution on Model Performance. GFMs pre-trained on lower-resolution data tend to perform worse
+on high-resolution datasets with limited spectral information, such as Five Billion Pixels (FBP) and SpaceNet 7 (see
+Fig. 1). GFMs like Scale-MAE are often among the best-performing models, reaching e.g. 67.19% mIoU on FBP
+and 62.96% mIoU on SpaceNet 7. In contrast, models pre-trained on lower resolutions, such as S12-DINO (51.15%
+on FBP) and S12-Data2Vec (48.82% on FBP), show lower performance. This trend is especially evident in tasks
+without extensive spectral information, where spatial detail becomes essential. Observe, for example, MADOS, where
+GFM-Swin achieves a high 64.71% mIoU, but models like SSL4EO12-MAE (49.90% mIoU) and SSL4EO12-DINO
+(49.37% mIoU) lag behind, showing the advantage of pre-training on high-resolution data. On the other hand, in some
+cases, when there is a match in the pre-training data and the downstream task data we can observe an average increase
+in the performance (e.g. Prithvi pre-trained on Harmonized Landsat Sentinel-2 data performs strongly on HLS Burn
+12
+
+PANGAEA
+
+Table 5: Performance evaluation of Geospatial Foundation Models across 11 benchmark datasets using 100% of the
+data. For semantic segmentation and change detection tasks, the mIoU ↑ is reported. For regression task, RMSE ↓ is
+reported. #Top2 indicates the number of datasets where the models achieve top-2 performance across all evaluated
+datasets.
+Model
+
+HLS Burns MADOS PASTIS Sen1Floods11 xView2 FBP DynEarthNet CropMap SN7 AI4Farms BioMassters #Top2
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+82.42
+80.63
+76.90
+83.62
+76.59
+79.96
+76.68
+80.47
+81.58
+81.72
+81.91
+81.91
+
+67.55
+59.58
+64.71
+49.98
+60.00
+55.86
+57.32
+57.99
+51.76
+49.37
+49.90
+44.36
+
+32.32
+30.02
+21.24
+33.93
+18.23
+17.51
+24.55
+35.44
+34.49
+36.18
+32.03
+34.32
+
+90.89
+89.37
+72.60
+90.37
+74.26
+90.30
+74.13
+89.07
+89.26
+88.61
+87.79
+88.15
+
+53.27
+59.64
+59.15
+49.35
+57.41
+52.23
+60.72
+48.40
+51.59
+50.56
+50.44
+51.36
+
+51.83
+43.18
+67.18
+46.81
+69.19
+50.97
+67.19
+33.42
+53.02
+51.15
+51.92
+48.82
+
+38.29
+39.29
+34.09
+27.86
+31.78
+36.31
+35.11
+37.85
+35.44
+34.81
+34.08
+35.90
+
+49.38
+51.33
+46.98
+43.07
+52.05
+46.97
+25.42
+46.95
+48.58
+48.66
+45.8
+54.03
+
+59.28
+61.84
+60.89
+56.54
+57.76
+61.88
+62.96
+58.86
+57.64
+56.47
+57.13
+58.23
+
+25.65
+27.07
+27.19
+26.86
+25.12
+25.13
+21.47
+26.75
+25.38
+25.62
+24.69
+24.23
+
+36.81
+42.81
+46.83
+39.99
+49.79
+41.67
+47.15
+36.11
+40.21
+41.23
+41.07
+41.91
+
+2
+2
+1
+1
+2
+0
+3
+1
+0
+1
+0
+1
+
+UNet Baseline
+ViT Baseline
+
+84.51
+81.58
+
+54.79
+48.19
+
+31.60
+38.53
+
+91.42
+87.66
+
+58.68 60.47
+57.43 59.32
+
+39.46
+36.83
+
+47.57
+44.08
+
+62.09
+52.57
+
+46.34
+38.37
+
+35.67
+38.55
+
+6
+2
+
+Scars). When compared to supervised baselines, we can observe that GFMs struggle especially on low-resolution tasks,
+probably because features useful for these downstream tasks are easier to learn from not specialized architecture (i.e.
+UNet), due to their reduced available dense information. On the other hand, on high-resolution tasks, GFMs, pre-trained
+on similar resolution data, still offer strong performance (Fig. 1).
+Role of Spectral Information in Task-Specific Performance. Spectral richness significantly impacts tasks that
+require fine spectral detail (e.g. marine, agricultural, and forest domains). In datasets such as MADOS, Crop Type
+Mapping-SS, and BioMassters, GFMs trained with a wider spectral range perform best. CROMA reaches 67.55% mIoU
+on MADOS and 49.38% mIoU on Crop Type Mapping-SS. Similarly, SpectralGPT along with CROMA are among the
+top-performing models with low RMSE on BioMassters, suggesting that models that use diverse spectral data capture
+essential distinctions, whereas models without this range (e.g. Scale-MAE reaches 47.15 RMSE on BioMassters)
+underperform. The trend on HLS Burn Scars illustrates this: trained on a wider set of bands reach better performance on
+average. On simpler tasks where spectral information is less crucial, models with fewer spectral inputs are competitive.
+For example, GFM-Swin excels in FBP and SpaceNet 7, but struggles on BioMassters, indicating that spatial features
+can compensate for lower spectral diversity for urban land cover tasks, especially as the downstream datasets use RGB
+imagery only. Similar observations hold for the supervised baselines that can leverage all of the spectral information and
+deliver strong performances on low-resolution tasks (e.g. UNet reaches 84.51% and ViT 81.58% on HLS Burn Scars).
+Effectiveness of Text-Based Models for Multi-Class Semantic Segmentation Datasets. The text-augmented
+RemoteCLIP model shows advantages in complex, multi-class tasks where class boundaries are subtle, such as MADOS
+(where it reaches third place with 60.00% mIoU) and FBP (first place with 69.19% mIoU). This success likely comes
+from RemoteCLIP’s ability to leverage text-based information during training to learn features that can differentiate
+visually similar classes. However, RemoteCLIP underperforms on simpler tasks, e.g. scores only 74.26% mIoU on
+Sen1Floods11, compared to S12-MoCo (89.26% mIoU) and CROMA (90.89% mIoU). This limitation may be due to
+its RGB-only training, which restricts its potential in tasks that benefit from a broader spectral range.
+Strong Convolutional Baseline. For simpler datasets with fewer classes, the convolutional UNet baseline excels. UNet
+achieves the best results on HLS Burn Scars (84.51 % mIoU), Sen1Floods11 (91.42 % mIoU), and AI4SmallFarms
+(46.34 % mIoU), showing that such a simple convolutional model is well-suited for simpler datasets. Overall, our
+results indicate that learning the features through convolution is the best approach for one-class datasets. On the other
+hand, when there is a domain gap between pre-training and downstream task (i.e. regression), performance is so poor
+that even supervised baselines do better than GFMs (35.67 RMSE w.r.t. second best 36.11 RMSE with SpectralGPT).
+Thus, UNet is the model that reaches top-2 performance (across all models) the biggest number of times (5 times w.r.t
+to CROMA’s 3 and Scale-MAE 3 times).
+Challenges with Multi-Temporal Tasks. Most GFMs do not consider satellite image time series in their design,
+and the few GFMs that are designed to leverage the temporal dimension of EO data (i.e. Prithvi and SatlasNet)
+13
+
+PANGAEA
+
+performed comparatively low on multi-temporal tasks. Prithvi scored the lowest mIoU on DynamicEarthNet (27.86%)
+and SatlasNet scored the lowest mIoU on PASTIS-R (17.51%). Both Prithvi and SatlasNet were outperformed by
+several uni-temporal GFMs when combined with a temporal module (i.e. L-TAE). This is stressed by the results on
+all multi-temporal datasets we evaluated; PASTIS-R, DynamicEarthNet, Crop Type Mapping-SS, and BioMassters.
+Most notably, the uni-temporal models such as CROMA achieved better scores (32.32% mIoU on PASTIS-R, 42.12%
+mIoU on DynamicEarthNet, and 36.81 RMSE on BioMassters) than both Prithvi and SatlasNet. Therefore, our results
+highlight the need for dedicated multi-temporal foundation models capable of effectively capturing temporal patterns in
+satellite image time series.
+Challenges with Multi-Modal Datasets. While some models like S12-MAE, CROMA, and DOFA incorporate SAR
+data through specialized encoders or dynamic wavelength adjustments, their performance on multi-modal datasets often
+falls short of expectations. As demonstrated in Tables A3, A12 and A18, utilizing optical data alone generally yields
+superior results compared to incorporating SAR information, whether solely or in combination with optical data. This
+performance gap indicates that effectively leveraging multi-modal data, particularly the fusion of optical and SAR
+imagery, remains a significant challenge for GFMs.
+5.2
+
+Data Scarcity
+
+Table 6: Performance evaluation of Geospatial Foundation Models across 11 benchmark datasets using 50% of the data.
+For semantic segmentation and change detection tasks, the mIoU ↑ is reported. For regression task, RMSE ↓ is reported.
+#Top2 indicates the number of datasets where the models achieve top-2 performance across all evaluated datasets.
+Model
+
+HLS Burns MADOS PASTIS Sen1Floods11 xView2 FBP DynEarthNet CropMap SN7 AI4Farms BioMassters # Top-2
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+81.52
+78.02
+74.36
+80.89
+74.28
+75.97
+75.47
+76.40
+79.79
+80.12
+80.13
+79.82
+
+57.68
+55.21
+63.37
+40.79
+53.26
+52.24
+46.87
+58.00
+42.90
+40.42
+44.29
+41.22
+
+32.33
+28.60
+20.41
+33.13
+17.46
+16.78
+23.26
+34.61
+32.59
+35.71
+31.15
+33.42
+
+90.57
+88.39
+71.61
+89.69
+71.67
+89.45
+72.54
+87.52
+89.22
+88.93
+88.43
+86.58
+
+51.44
+58.91
+57.81
+45.79
+57.43
+50.74
+59.45
+45.94
+49.66
+48.46
+47.09
+48.84
+
+48.01
+36.90
+63.14
+40.27
+65.92
+46.04
+62.11
+21.71
+46.92
+44.85
+45.63
+46.73
+
+38.30
+39.20
+31.25
+33.43
+30.91
+36.34
+32.60
+36.52
+34.45
+32.76
+33.29
+32.61
+
+42.20
+30.93
+31.42
+42.51
+36.3
+35.29
+20.32
+32.09
+41.32
+31.13
+28.07
+28.53
+
+59.31
+47.06
+59.83
+49.45
+50.83
+60.74
+61.24
+56.28
+56.21
+55.14
+55.55
+56.94
+
+28.19
+26.69
+28.43
+29.27
+25.11
+27.08
+26.40
+27.46
+28.38
+25.68
+27.50
+25.84
+
+38.50
+42.81
+48.19
+41.03
+50.09
+42.23
+46.74
+37.34
+41.08
+41.47
+41.66
+42.82
+
+4
+2
+2
+1
+1
+1
+2
+2
+0
+1
+0
+0
+
+UNet Baseline
+ViT Baseline
+
+82.39
+78.17
+
+43.87
+28.77
+
+30.25
+38.71
+
+90.91
+86.08
+
+56.58 55.42
+54.82 57.32
+
+35.14
+37.33
+
+36.30
+39.53
+
+46.82
+49.21
+
+45.02
+38.37
+
+36.72
+39.56
+
+4
+2
+
+We further evaluate the performance of the selected GFMs by reducing the percentage of labeled data used for training to
+50% and 10%, while preserving the original data distribution. The results are summarized in Tables 6 and 7, respectively,
+providing insights into the models’ performance under limited supervision, simulating real-world scenarios where
+labeled data is often scarce.
+A general trend of performance degradation is observed across various EO tasks. This observation aligns with the
+well-established principle that models typically benefit from larger training sets, which provide a more comprehensive
+representation of the data distribution and thereby enable better generalization.
+Nevertheless, with limited training samples, a compelling trend emerges where several GFMs demonstrate notable
+strengths. We report the number of times each model achieves a top-2 performance across all datasets. While the fully
+supervised UNet baseline performs best in this score, this metric shifts in favor of GFMs as the amount of labeled data
+decreases. For instance, UNet achieves a score of 6 for this metric with fully labeled datasets, but its score decreases to
+4 and 2 for the 50% and 10% labeled data scenarios, respectively. In contrast, some GFMs show improved performance,
+with CROMA achieving a score of 6 in the 10% labeled data scenario. This trend is also evident in datasets such as
+HLS Burn Scars and SpaceNet 7.
+This phenomenon can be attributed to the better generalization capabilities of foundation models compared to fully
+supervised baselines, which stem from their exposure to a vast and diverse range of data during pre-training. In
+situations where labeled data is scarce, foundation models can effectively leverage the knowledge acquired during
+14
+
+PANGAEA
+
+Table 7: Performance evaluation of Geospatial Foundation Models across 11 benchmark datasets using 10% of the data.
+For semantic segmentation and change detection tasks, the mIoU ↑ is reported. For regression task, RMSE ↓ is reported.
+#Top2 indicates the number of datasets where the models achieve top-2 performance across all evaluated datasets.
+Model
+
+HLS Burns MADOS PASTIS Sen1Floods11 xView2 FBP DynEarthNet CropMap SN7 AI4Farms BioMassters #Top2
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+76.44
+71.98
+67.23
+77.73
+69.40
+74.79
+75.47
+83.35
+73.11
+75.93
+76.60
+74.38
+
+32.44
+23.77
+28.19
+21.24
+20.57
+29.87
+21.47
+20.29
+19.47
+23.47
+18.44
+17.86
+
+32.80
+27.68
+21.47
+33.56
+17.19
+16.76
+22.86
+34.53
+32.51
+36.62
+31.06
+33.09
+
+87.22
+82.84
+62.57
+86.28
+62.22
+83.92
+64.74
+83.12
+79.58
+84.95
+84.81
+81.91
+
+46.54
+55.60
+53.45
+35.08
+53.75
+44.07
+56.06
+35.81
+41.15
+41.02
+39.84
+41.60
+
+37.39
+27.82
+55.58
+29.98
+56.23
+37.86
+48.75
+39.51
+35.57
+34.63
+35.56
+37.27
+
+36.08
+39.15
+28.16
+32.28
+34.43
+34.64
+35.27
+35.33
+32.24
+32.78
+30.59
+33.63
+
+36.77
+29.91
+27.21
+27.71
+19.86
+29.08
+13.44
+31.06
+36.54
+38.44
+35.29
+34.11
+
+42.15
+46.10
+39.48
+36.78
+43.11
+49.78
+49.68
+36.31
+49.46
+41.15
+40.51
+40.66
+
+38.48
+27.74
+32.88
+35.04
+23.85
+13.91
+26.66
+37.35
+37.97
+37.91
+23.60
+22.85
+
+40.25
+46.03
+49.30
+41.19
+53.32
+44.38
+54.16
+39.44
+44.83
+42.74
+43.76
+46.52
+
+6
+2
+0
+0
+1
+2
+2
+2
+0
+2
+0
+0
+
+UNet Baseline
+ViT Baseline
+
+79.46
+75.92
+
+24.30
+10.18
+
+29.53
+38.44
+
+88.55
+81.85
+
+46.77 52.58
+44.85 56.53
+
+35.59
+35.39
+
+13.88
+27.76
+
+46.08
+36.01
+
+34.84
+39.20
+
+40.39
+44.89
+
+2
+3
+
+pre-training to compensate for the lack of task-specific labeled data, highlighting the potential of foundation models to
+address challenges in EO tasks where acquiring labeled data is often costly and time-consuming.
+5.3
+
+Normalization Impact
+Table 8: Ablation study on the impact of normalization strategies across three benchmark datasets.
+HLS Burns
+
+MADOS
+
+SpaceNet 7
+
+Model
+
+w/
+
+w/o
+
+% diff
+
+w/
+
+w/o
+
+% diff
+
+w/
+
+w/o
+
+% diff
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+82.42
+80.63
+76.90
+83.62
+76.59
+79.96
+76.68
+80.47
+81.58
+81.72
+81.91
+81.91
+
+83.76
+80.47
+68.94
+81.47
+66.04
+81.79
+61.68
+80.85
+82.61
+81.25
+82.44
+80.96
+
+2%
+0%
+-10%
+-3%
+-14%
+2%
+-20%
+0%
+1%
+-1%
+1%
+-1%
+
+67.55
+59.58
+64.71
+49.98
+60.00
+55.86
+57.32
+57.99
+51.76
+49.37
+49.90
+44.36
+
+54.21
+51.55
+50.39
+40.31
+32.82
+62.66
+16.81
+53.50
+60.18
+62.31
+60.48
+51.64
+
+-20%
+-13%
+-22%
+-19%
+-45%
+12%
+-71%
+-8%
+16%
+26%
+21%
+16%
+
+59.28
+61.84
+60.89
+56.54
+57.76
+61.88
+62.96
+58.86
+57.64
+56.47
+57.13
+58.23
+
+58.09
+60.41
+58.87
+56.80
+55.41
+61.29
+61.07
+58.06
+56.73
+55.39
+55.55
+56.53
+
+-2%
+-2%
+-3%
+0%
+-4%
+-1%
+-3%
+-1%
+-2%
+-2%
+-3%
+-3%
+
+In this ablation study, we examine the impact of the normalization strategy during the decoder fine-tuning stage.
+While our experiments normalized images using the mean and standard deviation of each band (following most of the
+original papers), this step was omitted in this ablation study to evaluate its effects. The analysis was conducted on both
+low-resolution datasets (HLS Burn Scars and MADOS) and a high-resolution dataset (SpaceNet 7).
+The results in Table 8 compare evaluation performance with and without the normalization strategy. Generally,
+normalization affects low-resolution datasets more significantly than high-resolution ones. In the high-resolution
+dataset SpaceNet 7, removing normalization has a minimal impact on performance; for example, the largest percentage
+difference is observed with RemoteCLIP, which shows only a 4% drop in mIoU. However, removing normalization
+causes quite large effects on low-resolution datasets. Particularly, models pre-trained on high-resolution data, are more
+susceptible to the absence of normalization in this setting. For instance, the performance of models like GFM-Swin,
+Scale-MAE, and RemoteCLIP drops significantly when applied to unnormalized data on both the HLS Burn Scars and
+MADOS datasets.
+15
+
+PANGAEA
+
+5.4
+
+Matching Training Resolution of the Model
+
+In this ablation study, we examine how adjusting the input resolution of test data to more closely match the resolution on
+which the GFMs were trained during the pre-training stage affects model performance. Specifically, we select models
+pre-trained on low-resolution data (i.e., S12-DINO and CROMA, pre-trained on 10m Sentinel-2 data, and Prithvi,
+pre-trained on 30m Harmonized Landsat and Sentinel-2 (HLS) data) and perform ablations on the high-resolution
+dataset FBP. For the FBP dataset, instead of cropping the images (as in previous experiments), we resized them using
+bilinear interpolation, effectively reducing the spatial resolution of the input data from 2 m/pixel to match the training
+resolution of the models.
+The results in Table 9 show that all models experience a significant performance drop when their input resolution is
+reduced to match the training resolutions. For instance, Prithvi’s performance decreases from 46.81% mIoU to 30.99%
+mIoU, and CROMA’s score drops from 51.83% mIoU to 21.10% mIoU. This highlights that fine-grained spatial details
+are essential for complex datasets like FBP, which involve many visually similar classes, even for models trained on
+lower-resolution data.
+Table 9: Ablation study on the effect of downsampling the input resolution to match the model’s training resolution on
+the FiveBillionPixels dataset.
+FiveBillionPixels
+Model
+CROMA
+Prithvi
+S12-DINO
+
+5.5
+
+w/o matching
+
+w/ matching
+
+% diff
+
+51.83
+46.81
+51.15
+
+21.10
+30.99
+36.75
+
+-59%
+-34%
+-28%
+
+Temporal Capabilities and Aggregation Strategies
+
+We employ two distinct feature aggregation strategies for multi-temporal datasets (PASTIS-R, Crop Type MappingSS, BioMassters and DynamicEarthNet): a naive linear mapping and L-TAE. A comparative analysis, presented in
+Table 10, reveals that L-TAE consistently enhances performance compared to the linear approach in all the datasets but
+DynamicEarthNet. Notably, L-TAE yields improvements ranging from 10% to 20% for the top-performing models
+on the PASTIS-R dataset. On DynamicEarthNet, however, L-TAE may lead to overfitting due to the minor temporal
+window spanned by the time series (6 days). See Appendix A for more insights. Generally speaking, these findings
+underscore the importance of effectively encoding temporal information in remote sensing tasks and highlight the
+potential of developing more sophisticated temporal aggregation strategies within GFMs.
+5.6
+
+Domain Adaptation
+
+The cross-region adaptation task on FBP presents a great challenge, primarily due to spatial autocorrelation. The results
+are reported in Table 11. Here, the class distribution differs significantly from the in-domain test, with the absence
+of five minor classes that are present in the training data. This discrepancy in class representation greatly impacts
+performance. For instance, CROMA, which performs competitively in cross-sensor tests, sees a reduction to 18.38% in
+cross-region tests, while other strong GFMs like RemoteCLIP and GFM-Swin score 36.53% mIoU and 35.39% mIoU,
+respectively.
+5.7
+
+Consideration on the Training Convergence
+
+Fig. 5 illustrates the training loss trajectories of some of the most illustrative GFMs – Scale-MAE, RemoteCLIP, UNet,
+CROMA, and DOFA – across four datasets: FBP, MADOS, HLS Burn Scars, and Sen1Floods11. The trends reveal
+important insights into the GFMs’ behavior depending on dataset difficulty and pre-training.
+For complex datasets like FBP and MADOS, the pre-trained GFMs – with frozen encoders – tend to begin with lower
+loss values. This suggests that these models possess beneficial pre-learned features, enabling them to adapt more readily
+to challenging datasets without requiring significant fine-tuning. By contrast, UNet, which is end-to-end fine-tuned,
+starts with a higher loss but reduces it steadily, showing that while it initially lags, it progressively learns the data
+patterns, even if not as efficiently as models with strong initialization from pre-training.
+In contrast, on easier datasets like HLS Burn Scars and Sen1Floods11, the training loss for all models, including the
+pre-trained ones, starts at relatively low values, indicating that the data may be less complex or more straightforward
+16
+
+PANGAEA
+
+Table 10: Comparison of different multi-temporal strategies on multi-temporal datasets. L-TAE generally demonstrates
+an advantage over linear temporal mapping.
+BioMassters
+
+Crop Type Mapping-SS
+
+PASTIS-R
+
+DynamicEarthNet
+
+Model
+
+Linear
+
+L-TAE
+
+Linear
+
+L-TAE
+
+Linear
+
+L-TAE
+
+Linear
+
+L-TAE
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+39.99
+43.25
+47.96
+42.90
+49.60
+52.24
+38.55
+41.82
+41.54
+42.54
+42.02
+
+36.81
+42.81
+46.83
+39.99
+49.79
+47.15
+36.11
+40.21
+41.23
+41.07
+41.91
+
+47.02
+49.81
+39.72
+39.92
+46.50
+21.39
+53.50
+44.22
+46.56
+46.28
+54.01
+
+49.38
+51.33
+46.98
+43.07
+52.05
+25.42
+46.95
+48.58
+48.66
+45.80
+54.03
+
+32.06
+24.49
+15.13
+27.40
+13.31
+11.74
+27.52
+26.09
+32.45
+27.06
+26.94
+
+38.51
+30.02
+21.24
+33.93
+18.23
+24.55
+35.44
+34.49
+36.18
+32.03
+34.32
+
+38.25
+40.84
+35.78
+28.42
+34.07
+35.47
+39.27
+36.53
+33.80
+35.23
+36.41
+
+38.29
+39.29
+34.09
+27.86
+31.78
+35.11
+37.85
+35.44
+34.81
+34.08
+35.90
+
+ViT Baseline
+
+40.94
+
+38.55
+
+50.24
+
+51.78
+
+36.57
+
+38.53
+
+36.83
+
+36.38
+
+Table 11: Domain Adaptation experiments for FiveBillionPixels, comparing model performance on dataset splits
+without and with regional domain gaps.
+Model
+
+w/o regional domain gap
+
+w/ regional domain gap
+
+% diff
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+51.83
+43.18
+67.18
+46.81
+69.19
+50.97
+67.19
+33.42
+53.02
+51.15
+51.92
+48.82
+
+18.38
+16.56
+35.39
+16.75
+36.53
+21.13
+34.88
+18.34
+17.30
+18.64
+17.78
+18.23
+
+-65%
+-62%
+-47%
+-64%
+-47%
+-59%
+-48%
+-45%
+-67%
+-64%
+-66%
+-63%
+
+UNet Baseline
+ViT Baseline
+
+60.47
+59.32
+
+30.14
+22.77
+
+-50%
+-62%
+
+for feature extraction. In these cases, pre-trained models do not appear to retain a distinct advantage in initial loss
+values over UNet, which starts on nearly the same level. This behavior aligns with the fact that UNet, with end-to-end
+fine-tuning, performs well on simpler datasets, as it can optimize its parameters fully to match the dataset characteristics.
+Interestingly, on Sen1Floods11, UNet’s stronger performance despite higher training loss values hints at potential
+overfitting by the foundation models, as they may overly adapt to training data without capturing the generalization
+needed for evaluation.
+5.8
+
+Impact of Encoder Fine-tuning
+
+In Table 12, we analyzed the effect of end-to-end fine-tuning on the performance of one of the best and worst-performing
+GFMs across all the datasets. From the results, we can observe that the impact of fine-tuning is not consistent across the
+GFMs and datasets. In some cases, fine-tuning improves the performance, while in others, it results in a decline. For
+instance, RemoteCLIP shows a noticeable drop in performance on HLS BurnsScars, with the model’s performance
+dropping from 76.59% (without fine-tuning) to 65.13% (with fine-tuning) mIoU. This suggests that fine-tuning might
+have caused the model to lose some of the encoded information from the pre-trained encoder, possibly related to
+text features. On the other hand, GFMs pre-trained on low-resolution data tend to exhibit more positive results, with
+constant or better performance. For example, CROMA, shows stability in performance after fine-tuning on MADOS,
+moving from 67.55% to 66.98% mIoU. DOFA shows improved results after fine-tuning on FBP, from 43.82% to 63.74%
+17
+
+PANGAEA
+
+FiveBillionPixels
+
+MADOS
+
+HLSBurnScars
+
+Sen1Floods11
+
+Figure 5: Convergence of training losses for four GFMs – one pre-trained on high-resolution (Scale-MAE), one on
+text-image (RemoteCLIP), one on different modalities and resolution (DOFA) and one on low-resolution Sentinel data –
+and a baseline (UNet), on different datasets (i.e. different domains and resolutions).
+
+Table 12: Impact of encoder fine-tuning on the performance of the best and worst-performing GFMs for each dataset.
+The table shows results without (w/o) and with (w/) fine-tuning, along with the relative percentage difference (% diff).
+Positive values indicate improvement, while negative values denote performance degradation. Results highlight the
+variability in fine-tuning effects across different models and datasets.
+Best model
+
+Worst model
+
+Dataset
+
+Model
+
+w/o
+
+w/
+
+% diff
+
+Model
+
+w/o
+
+w/
+
+% diff
+
+HLS Burns
+MADOS
+PASTIS
+Sen1Floods11
+xView2
+FBP
+DynEarthNet
+CropMap
+SN7
+AI4Farms
+BioMassters
+
+Prithvi
+CROMA
+S12-DINO
+CROMA
+ScaleMAE
+RemoteCLIP
+DOFA
+S12-Data2Vec
+Scale-MAE
+CROMA
+SpectralGPT
+
+83.62
+67.55
+36.18
+90.89
+60.72
+69.19
+39.29
+54.03
+62.96
+25.65
+36.11
+
+85.52
+66.98
+44.03
+90.87
+62.16
+55.58
+37.76
+56.27
+53.98
+24.78
+35.86
+
++2%
+-1%
++22%
+0%
++2%
+-20%
+-4%
++4%
+-14%
+-3%
+-1%
+
+RemoteCLIP
+S12-DINO
+SatlasNet
+GFM-Swin
+Prithvi
+DOFA
+Prithvi
+Scale-MAE
+S12-DINO
+S12-MAE
+RemoteCLIP
+
+76.59
+49.38
+17.51
+72.60
+49.35
+43.82
+27.86
+25.42
+56.47
+24.69
+49.79
+
+65.13
+56.98
+29.05
+75.70
+57.33
+63.74
+29.21
+20.17
+56.55
+23.73
+46.34
+
+-15%
++15%
++66%
++4%
++16%
++45%
++5%
+-21%
+0%
+-4%
+-7%
+
+18
+
+PANGAEA
+
+mIoU, suggesting that fine-tuning may help refine models trained on lower-resolution data to adapt more effectively
+to task-specific features. Overall, the lack of a clear, consistent pattern highlights that fine-tuning does not always
+guarantee an improvement and that the success of fine-tuning depends on the GFM’s pre-training, dataset characteristics,
+and the specific task at hand. Moreover, fine-tuning requires more resources, given the need for backpropagating the
+gradient on all the parameters.
+5.9
+
+Sensitivity to Hyperparameters
+
+For PANGAEA, we aim to adopt a standardized protocol that avoids the need for extensive hyperparameter fine-tuning
+for every new GFM tested. To achieve this, we set up an environment where learning rate tuning should have the least
+possible impact. The ADAM optimizer used in our experiments is known to be robust to changes in learning rate. In
+addition, the datasets are normalized, the decoder architecture is the same for each experiment, and it includes batch
+normalization layers. Because of this, we expect the magnitude of gradients to be fairly even between models.
+To verify this assumption, we optimize the learning rate on the MADOS and HLS Burn Scars datasets by evaluating
+seven possible learning rates over a log scale, from 10−2 down to 10−5 . Table 13 shows the results with the default
+learning rate of 10−4 , versus the best result of the optimization for the specific model-dataset combination, and their
+relative difference.
+The results indicate that in general our assumption stands, and the experiments are fairly stable under learning rate
+tuning. In the specific case of MADOS and the S12 family, the results do improve by tuning the learning rate, but even
+with this improvement, the overall ranking of models doesn’t change significantly. The S12 family of models is still in
+close competition with Prithvi for the worst-performing GFM on this dataset.
+This learning rate agnosticism is even more pronounced on the HLS Burn Scars experiment, where the results change
+even less. One interesting detail is that some models lose performance in the tuning experiments, meaning that the
+stochasticity of running multiple training runs is in the same order of magnitude as the gains achievable by learning rate
+tuning.
+Table 13: Performance comparison of various models on MADOS and HLS Burn Scars with a learning rate tuning.
+The table reports mIoU scores and the relative percentage difference (% diff) between untuned (w/o) and tuned (w/)
+learning rate configurations.
+MADOS
+
+6
+
+HLSBurnScars
+
+Model
+
+w/o
+
+w/
+
+% diff
+
+w/o
+
+w/
+
+% diff
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-Data2Vec
+S12-DINO
+S12-MAE
+S12-MoCo
+
+67.55
+59.58
+64.71
+49.98
+60.00
+55.86
+57.32
+57.99
+44.36
+49.37
+49.90
+51.76
+
+66.98
+61.56
+66.48
+53.83
+60.93
+58.31
+57.63
+58.13
+54.29
+55.75
+51.66
+52.15
+
+-1%
++3%
++3%
++8%
++2%
++4%
++1%
+0%
++22%
++13%
++4%
++1%
+
+82.42
+80.63
+76.90
+83.62
+76.59
+79.96
+76.68
+80.47
+81.91
+81.72
+81.91
+81.58
+
+83.25
+82.04
+76.48
+82.83
+76.65
+80.88
+76.90
+80.65
+81.74
+81.67
+81.18
+81.14
+
++1%
++2%
+-1%
+-1%
+0%
++1%
+0%
+0%
+0%
+0%
+-1%
+-1%
+
+UNet Baseline
+ViT Baseline
+
+54.79
+48.19
+
+54.79
+48.52
+
+0%
++1%
+
+84.51
+81.58
+
+85.68
+80.76
+
++1%
+-1%
+
+Limitations
+
+Despite its contributions, this work has some limitations. First, the focus is predominantly on computer vision-based EO
+tasks, leaving out non-vision applications such as climate modeling or weather forecasting. Second, the computational
+resources required for training and fine-tuning GFMs may limit accessibility for resource-constrained environments.
+Additionally, while Pangaea includes diverse datasets, there is room for expanding geographical and application domain
+coverage. Future work should also explore multi-sensor data integration beyond satellite imagery, incorporating aerial
+and drone datasets to further enhance GFM applicability. Finally, from a protocol standardization point of view, we
+19
+
+PANGAEA
+
+foresee releasing new features that can help the fast and consistent reproducibility of our results and the benchmark
+of newly added GFMs. These features include the release of a fixed stratified subsample for each dataset, and an
+arena-mode benchmarking, with fixed command lines and randomness to launch experiments and obtain final scores.
+
+7
+
+Conclusions
+
+The Pangaea Benchmark addresses critical gaps in the evaluation of GFMs. By incorporating diverse downstream
+tasks (i.e. semantic segmentation, change detection, and regression) and employing datasets that encompass various
+resolutions, sensor types, and application domains (e.g. urban, agriculture, forestry), it provides a robust framework
+for assessing GFM generalization and performance under real-world conditions. We advocate for surveying and
+testing a representative set of GFM approaches, including vision language-based models and fully-supervised learning
+paradigms, to gain a deeper understanding of their strengths and weaknesses. Our analysis demonstrates the strengths
+and weaknesses of GFMs under different scenarios (e.g. label scarcity, domain shift, etc...), especially w.r.t. specialized
+baseline, that most of the time can still be a strong counterpart. Furthermore, the open-source nature of this benchmark
+fosters transparency and collaboration, driving progress in the development of adaptable and effective GFMs.
+
+Contributors
+Conceptualization. VM AN NA Methodology. VM AN NA Codebase prototype. VM YJ GL DK LZ Semantic
+Segmentation. YJ VM DK GL LZ EB AS Change Detection. SH SG HF Regression. RY EB Ablation Studies. VM
+HF DK YJ RY GL Manuscript Revision. AN MV NA Supervision. AN NA MV YB Fundings. AN NA MV YB
+
+References
+[1] Gengchen Mai, Chris Cundy, Kristy Choi, Yingjie Hu, Ni Lao, and Stefano Ermon. Towards a foundation model
+for geospatial artificial intelligence (vision paper). In Proceedings of the 30th International Conference on
+Advances in Geographic Information Systems, SIGSPATIAL ’22, New York, NY, USA, 2022. Association for
+Computing Machinery. 1
+[2] Alexandre Lacoste, Evan David Sherwin, Hannah Kerner, Hamed Alemohammad, Björn Lütjens, Jeremy Irvin,
+David Dao, Alex Chang, Mehmet Gunturkun, Alexandre Drouin, Pau Rodriguez, and David Vazquez. Toward
+foundation models for earth monitoring: Proposal for a climate change benchmark, 2021. 1
+[3] Devis Tuia, Konrad Schindler, Begüm Demir, Gustau Camps-Valls, Xiao Xiang Zhu, Mrinalini Kochupillai,
+Sašo Džeroski, Jan N. van Rijn, Holger H. Hoos, Fabio Del Frate, Mihai Datcu, Jorge-Arnulfo Quiané-Ruiz,
+Volker Markl, Bertrand Le Saux, and Rochelle Schneider. Artificial intelligence to advance earth observation: a
+perspective, 2023. 1
+[4] Hao Zhang, Jin-Jian Xu, Hong-Wei Cui, Lin Li, Yaowen Yang, Chao-Sheng Tang, and Niklas Boers. When
+geoscience meets foundation models: Towards general geoscience artificial intelligence system, 2024. 1
+[5] Patrick Helber, Benjamin Bischke, Andreas Dengel, and Damian Borth. Eurosat: A novel dataset and deep
+learning benchmark for land use and land cover classification. IEEE Journal of Selected Topics in Applied Earth
+Observations and Remote Sensing, 12(7):2217–2226, 2019. 1, 4
+[6] Di Wang, Jing Zhang, Minqiang Xu, Lin Liu, Dongsheng Wang, Erzhong Gao, Chengxi Han, Haonan Guo,
+Bo Du, Dacheng Tao, and Liangpei Zhang. Mtp: Advancing remote sensing foundation model via multi-task
+pretraining, 2024. 1, 6
+[7] Gengchen Mai, Weiming Huang, Jin Sun, Suhang Song, Deepak Mishra, Ninghao Liu, Song Gao, Tianming Liu,
+Gao Cong, Yingjie Hu, Chris Cundy, Ziyuan Li, Rui Zhu, and Ni Lao. On the opportunities and challenges of
+foundation models for geospatial artificial intelligence, 2023. 2
+[8] Esther Rolf, Konstantin Klemmer, Caleb Robinson, and Hannah Kerner. Mission critical – satellite data is a
+distinct modality in machine learning, 2024. 2
+[9] Casper Fibaek, Luke Camilleri, Andreas Luyts, Nikolaos Dionelis, and Bertrand Le Saux. Phileo bench:
+Evaluating geo-spatial foundation models, 2024. 2, 7
+[10] Alexandre Lacoste, Nils Lehmann, Pau Rodriguez, Evan David Sherwin, Hannah Kerner, Björn Lütjens,
+Jeremy Andrew Irvin, David Dao, Hamed Alemohammad, Alexandre Drouin, Mehmet Gunturkun, Gabriel
+Huang, David Vazquez, Dava Newman, Yoshua Bengio, Stefano Ermon, and Xiao Xiang Zhu. Geo-bench:
+Toward foundation models for earth monitoring, 2023. 2, 4, 7, 9
+20
+
+PANGAEA
+
+[11] Christopher Yeh, Chenlin Meng, Sherrie Wang, Anne Driscoll, Erik Rozi, Patrick Liu, Jihyeon Lee, Marshall
+Burke, David B. Lobell, and Stefano Ermon. Sustainbench: Benchmarks for monitoring the sustainable
+development goals with machine learning, 2021. 2, 7, 8, 9
+[12] Nikolaos Ioannis Bountos, Arthur Ouaknine, and David Rolnick. Fomo-bench: a multi-modal, multi-scale and
+multi-task forest monitoring benchmark for remote sensing foundation models. arXiv preprint arXiv:2312.10114,
+2023. 2, 6
+[13] Yi-Chia Chang, Adam J. Stewart, Favyen Bastani, Piper Wolters, Shreya Kannan, George R. Huber, Jingtong
+Wang, and Arindam Banerjee. On the generalizability of foundation models for crop type mapping. ArXiv,
+abs/2409.09451, 2024. 2, 3, 7
+[14] Anthony Fuller, Koreen Millard, and James R. Green. Croma: Remote sensing representations with contrastive
+radar-optical masked autoencoders, 2023. 2, 5, 10
+[15] Colorado J. Reed, Ritwik Gupta, Shufan Li, Sarah Brockman, Christopher Funk, Brian Clipp, Kurt Keutzer,
+Salvatore Candido, Matt Uyttendaele, and Trevor Darrell. Scale-mae: A scale-aware masked autoencoder for
+multiscale geospatial representation learning, 2023. 2, 5, 6, 10, 11, 42
+[16] Favyen Bastani, Piper Wolters, Ritwik Gupta, Joe Ferdinando, and Aniruddha Kembhavi. Satlas: A large-scale,
+multi-task dataset for remote sensing image understanding. arXiv preprint arXiv:2211.15660, 2022. 2, 5, 10
+[17] Zongzhe Xu, Ritvik Gupta, Wenduo Cheng, Alexander Shen, Junhong Shen, Ameet Talwalkar, and Mikhail
+Khodak. Specialized foundation models struggle to beat supervised baselines, 2024. 3
+[18] Esther Rolf, Lucia Gordon, Milind Tambe, and Andrew Davies. Contrasting local and global modeling with
+machine learning and satellite data: A case study estimating tree canopy height in african savannas, 2024. 3
+[19] Zhitong Xiong, Fahong Zhang, Yi Wang, Yilei Shi, and Xiao Xiang Zhu. Earthnets: Empowering ai in earth
+observation, 2024. 4, 5, 7
+[20] Michael Schmitt, Seyed Ali Ahmadi, Yonghao Xu, Gülşen Taşkin, Ujjwal Verma, Francescopaolo Sica, and
+Ronny Hänsch. There are no data like more data: Datasets for deep learning in earth observation. IEEE
+Geoscience and Remote Sensing Magazine, 11(3):63–97, September 2023. 4, 5, 9
+[21] Yi Yang and Shawn Newsam. Bag-of-visual-words and spatial extensions for land-use classification. In
+Proceedings of the 18th SIGSPATIAL international conference on advances in geographic information systems,
+pages 270–279, 2010. 4
+[22] Gui-Song Xia, Wen Yang, Julie Delon, Yann Gousseau, Hong Sun, and Henri MaÎtre. Structural high-resolution
+satellite image indexing. In Symposium: 100 Years ISPRS - Advancing Remote Sensing Science, Vienna, Austria,
+2010. 4
+[23] Dengxin Dai and Wen Yang. Satellite image classification via two-layer sparse coding with biased image
+representation. IEEE Transactions on Geoscience and Remote Sensing, 8(1):173–176, 2011. 4
+[24] Yang Long, Gui-Song Xia, Liangpei Zhang, Gong Cheng, and Deren Li. Aerial scene parsing: From tile-level
+scene classification to pixel-wise semantic labeling, 2022. 4
+[25] Yang Long, Gui-Song Xia, Shengyang Li, Wen Yang, Michael Ying Yang, Xiao Xiang Zhu, Liangpei Zhang, and
+Deren Li. On creating benchmark dataset for aerial image interpretation: Reviews, guidances and million-aid.
+IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing, 14:4205–4230, 2021. 4
+[26] Gencer Sumbul, Marcela Charfuelan, Begüm Demir, and Volker Markl. Bigearthnet: A large-scale benchmark
+archive for remote sensing image understanding. In IGARSS 2019-2019 IEEE International Geoscience and
+Remote Sensing Symposium, pages 5901–5904. IEEE, 2019. 4
+[27] Gencer Sumbul, Arne De Wall, Tristan Kreuziger, Filipe Marcelino, Hugo Costa, Pedro Benevides, Mario
+Caetano, Begüm Demir, and Volker Markl. Bigearthnet-mm: A large-scale, multimodal, multilabel benchmark
+archive for remote sensing image classification and retrieval [software and data sets]. IEEE Geoscience and
+Remote Sensing Magazine, 9(3):174–180, 2021. 4, 7
+[28] Bryan Zhu, Nicholas Lui, Jeremy Irvin, Jimmy Le, Sahil Tadwalkar, Chenghao Wang, Zutao Ouyang, Frankie Y.
+Liu, Andrew Y. Ng, and Robert B. Jackson. Meter-ml: A multi-sensor earth observation benchmark for automated
+methane source mapping, 2022. 4
+[29] Dan M. Kluger, Sherrie Wang, and David B. Lobell. Two shifts for crop mapping: Leveraging aggregate crop
+statistics to improve satellite-based maps in new regions. Remote Sensing of Environment, 262:112488, 2021. 4
+[30] Edemir Ferreira, Matheus Brito, Remis Balaniuk, Mário S Alvim, and Jefersson A dos Santos. Brazildam: A
+benchmark dataset for tailings dam detection. In 2020 IEEE Latin American GRSS & ISPRS Remote Sensing
+Conference (LAGIRS), pages 339–344. IEEE, 2020. 4
+21
+
+PANGAEA
+
+[31] Jeremy Irvin, Hao Sheng, Neel Ramachandran, Sonja Johnson-Yu, Sharon Zhou, Kyle Story, Rose Rustowicz,
+Cooper Elsworth, Kemen Austin, and Andrew Y. Ng. Forestnet: Classifying drivers of deforestation in indonesia
+using deep learning on satellite imagery, 2020. 4
+[32] Gordon Christie, Neil Fendley, James Wilson, and Ryan Mukherjee. Functional map of the world. In Proceedings
+of the IEEE Conference on Computer Vision and Pattern Recognition, pages 6172–6180, 2018. 4, 7
+[33] Ke Li, Gang Wan, Gong Cheng, Liqiu Meng, and Junwei Han. Object detection in optical remote sensing images:
+A survey and a new benchmark. ISPRS journal of photogrammetry and remote sensing, 159:296–307, 2020. 4, 7
+[34] J Ding, N Xue, GS Xia, X Bai, W Yang, MY Yang, S Belongie, J Luo, M Datcu, M Pelillo, et al. Object detection
+in aerial images: A large-scale benchmark and challenges. arxiv 2021. arXiv preprint arXiv:2102.12219, 2021. 4
+[35] Syed Waqas Zamir, Aditya Arora, Akshita Gupta, Salman Khan, Guolei Sun, Fahad Shahbaz Khan, Fan Zhu,
+Ling Shao, Gui-Song Xia, and Xiang Bai. isaid: A large-scale dataset for instance segmentation in aerial images.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops, pages
+28–37, 2019. 4
+[36] Fernando Paolo, Tsu ting Tim Lin, Ritwik Gupta, Bryce Goodman, Nirav Patel, Daniel Kuster, David Kroodsma,
+and Jared Dunnmon. xview3-sar: Detecting dark fishing activity using synthetic aperture radar imagery, 2022. 4
+[37] Lanqing Huang, Bin Liu, Boying Li, Weiwei Guo, Wenhao Yu, Zenghui Zhang, and Wenxian Yu. Opensarship: A
+dataset dedicated to sentinel-1 ship interpretation. IEEE Journal of Selected Topics in Applied Earth Observations
+and Remote Sensing, 11(1):195–208, 2017. 4
+[38] Jianwei Li, Changwen Qu, and Jiaqi Shao. Ship detection in sar images based on an improved faster r-cnn. In
+2017 SAR in Big Data Era: Models, Methods and Applications (BIGSARDATA), pages 1–6. IEEE, 2017. 4
+[39] Jakaria Rabbi, Nilanjan Ray, Matthias Schubert, Subir Chowdhury, and Dennis Chao. Small-object detection
+in remote sensing images with end-to-end edge-enhanced gan and object detector network. Remote Sensing,
+12(9):1432, 2020. 4
+[40] Sebastien Razakarivony and Frederic Jurie. Vehicle detection in aerial imagery: A small target detection
+benchmark. Journal of Visual Communication and Image Representation, 34:187–203, 2016. 4
+[41] Geremy Heitz and Daphne Koller. Learning spatial context: Using stuff to find things. In Computer Vision–ECCV
+2008: 10th European Conference on Computer Vision, Marseille, France, October 12-18, 2008, Proceedings,
+Part I 10, pages 30–43. Springer, 2008. 4
+[42] Franz Rottensteiner, Gunho Sohn, Jaewook Jung, Markus Gerke, Caroline Baillard, Sebastien Benitez, and Uwe
+Breitkopf. The isprs benchmark on urban object classification and 3d building reconstruction. ISPRS Annals of
+the Photogrammetry, Remote Sensing and Spatial Information Sciences I-3 (2012), Nr. 1, 1(1):293–298, 2012. 4
+[43] Junjue Wang, Zhuo Zheng, Ailong Ma, Xiaoyan Lu, and Yanfei Zhong. Loveda: A remote sensing land-cover
+dataset for domain adaptive semantic segmentation, 2022. 4
+[44] Xin-Yi Tong, Gui-Song Xia, and Xiao Xiang Zhu. Enabling country-scale land cover mapping with meterresolution satellite imagery. ISPRS Journal of Photogrammetry and Remote Sensing, 196:178–196, 2023. 4,
+9
+[45] Ilke Demir, Krzysztof Koperski, David Lindenbaum, Guan Pang, Jing Huang, Saikat Basu, Forest Hughes,
+Devis Tuia, and Ramesh Raskar. Deepglobe 2018: A challenge to parse the earth through satellite images. In
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition Workshops, pages 172–181,
+2018. 4
+[46] Anatol Garioud, Nicolas Gonthier, Loic Landrieu, Apolline De Wit, Marion Valette, Marc Poupée, Sebastien
+Giordano, and Boris Wattrelos. FLAIR : a country-scale land cover semantic segmentation dataset from multisource optical imagery. In Thirty-seventh Conference on Neural Information Processing Systems Datasets and
+Benchmarks Track, 2023. 4
+[47] Steve Foga, Pat L Scaramuzza, Song Guo, Zhe Zhu, Ronald D Dilley Jr, Tim Beckmann, Gail L Schmidt, John L
+Dwyer, M Joseph Hughes, and Brady Laue. Cloud detection algorithm comparison and validation for operational
+landsat data products. Remote sensing of environment, 194:379–390, 2017. 4
+[48] Sorour Mohajerani and Parvaneh Saeedi. Cloud-net: An end-to-end cloud detection algorithm for landsat
+8 imagery. In IGARSS 2019-2019 IEEE International Geoscience and Remote Sensing Symposium, pages
+1029–1032. IEEE, 2019. 4
+[49] Zhiwei Li, Huanfeng Shen, Qing Cheng, Yuhao Liu, Shucheng You, and Zongyi He. Deep learning based
+cloud detection for remote sensing images by the fusion of multi-scale convolutional features. arXiv preprint
+arXiv:1810.05801, page 7, 2018. 4
+22
+
+PANGAEA
+
+[50] Wojciech Sirko, Emmanuel Asiedu Brempong, Juliana T. C. Marcos, Abigail Annkah, Abel Korme, Mohammed Alewi Hassen, Krishna Sapkota, Tomer Shekel, Abdoulaye Diack, Sella Nevo, Jason Hickey, and John
+Quinn. High-resolution building and road detection from sentinel-2. ArXiv, abs/2310.11622, 2023. 4
+[51] Adam Van Etten, Dave Lindenbaum, and Todd M. Bacastow. Spacenet: A remote sensing dataset and challenge
+series, 2019. 4, 8, 9
+[52] Rose M Rustowicz, Robin Cheong, Lijing Wang, Stefano Ermon, Marshall Burke, and David Lobell. Semantic
+segmentation of crop type in africa: A novel dataset and analysis of deep learning methods. In Proceedings of
+the IEEE/cvf conference on computer vision and pattern recognition workshops, pages 75–82, 2019. 4, 8
+[53] Vivien Sainte Fare Garnot, Loic Landrieu, and Nesrine Chehata. Multi-modal temporal attention models for crop
+mapping from satellite time series. ISPRS Journal of Photogrammetry and Remote Sensing, 2022. 4, 8, 9
+[54] Luigi T Luppino, Filippo M Bianchi, Gabriele Moser, and Stian N Anfinsen. Unsupervised image regression for
+heterogeneous change detection. arXiv preprint arXiv:1909.05948, 2019. 4
+[55] Aysim Toker, Lukas Kondmann, Mark Weber, Marvin Eisenberger, Andrés Camero, Jingliang Hu, Ariadna Pregel
+Hoderlein, Çağlar Şenaras, Timothy Davis, Daniel Cremers, et al. Dynamicearthnet: Daily multi-spectral satellite
+dataset for semantic change segmentation. In Proceedings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, pages 21158–21167, 2022. 4, 8, 9
+[56] Hao Chen and Zhenwei Shi. A spatial-temporal attention-based method and a new dataset for remote sensing
+image change detection. Remote Sensing, 12(10), 2020. 4, 5
+[57] Ritwik Gupta, Richard Hosfelt, Sandra Sajeev, Nirav Patel, Bryce Goodman, Jigar Doshi, Eric Heim, Howie
+Choset, and Matthew Gaston. xbd: A dataset for assessing building damage from satellite imagery, 2019. 4, 8, 9,
+35
+[58] Ritwik Gupta, Bryce Goodman, Nirav Patel, Ricky Hosfelt, Sandra Sajeev, Eric Heim, Jigar Doshi, Keane Lucas,
+Howie Choset, and Matthew Gaston. Creating xbd: A dataset for assessing building damage from satellite
+imagery. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+Workshops, June 2019. 4, 8
+[59] Csaba Benedek and Tamás Szirányi. Change detection in optical aerial images by a multilayer conditional mixed
+markov model. IEEE Transactions on Geoscience and Remote Sensing, 47(10):3416–3430, 2009. 4
+[60] Kunping Yang, Gui-Song Xia, Zicheng Liu, Bo Du, Wen Yang, Marcello Pelillo, and Liangpei Zhang. Asymmetric siamese networks for semantic change detection in aerial images. IEEE Transactions on Geoscience and
+Remote Sensing, 60:1–18, 2021. 4
+[61] Rodrigo Caye Daudt, Bertr Le Saux, and Alexandre Boulch. Fully convolutional siamese networks for change
+detection. In 2018 25th IEEE international conference on image processing (ICIP), pages 4063–4067. IEEE,
+2018. 5
+[62] Mélisande Teng, Amna Elmustafa, Benjamin Akera, Yoshua Bengio, Hager Radi, Hugo Larochelle, and David
+Rolnick. Satbird: a dataset for bird species distribution modeling using remote sensing and citizen science data.
+In Thirty-seventh Conference on Neural Information Processing Systems Datasets and Benchmarks Track, 2023.
+5
+[63] Sungduk Yu, Walter Hannah, Liran Peng, Jerry Lin, Mohamed Aziz Bhouri, Ritwik Gupta, Björn Lütjens, Justus Christopher Will, Gunnar Behrens, Julius Busecke, Nora Loose, Charles I Stern, Tom Beucler, Bryce Harrop,
+Benjamin R Hillman, Andrea Jenney, Savannah Ferretti, Nana Liu, Anima Anandkumar, Noah D Brenowitz,
+Veronika Eyring, Nicholas Geneva, Pierre Gentine, Stephan Mandt, Jaideep Pathak, Akshay Subramaniam, Carl
+Vondrick, Rose Yu, Laure Zanna, Tian Zheng, Ryan Abernathey, Fiaz Ahmed, David C Bader, Pierre Baldi,
+Elizabeth Barnes, Christopher Bretherton, Peter Caldwell, Wayne Chuang, Yilun Han, Yu Huang, Fernando
+Iglesias-Suarez, Sanket Jantre, Karthik Kashinath, Marat Khairoutdinov, Thorsten Kurth, Nicholas Lutsko,
+Po-Lun Ma, Griffin Mooers, J. David Neelin, David Randall, Sara Shamekh, Mark A Taylor, Nathan Urban,
+Janni Yuval, Guang Zhang, and Michael Pritchard. Climsim: A large multi-scale dataset for hybrid physics-ml
+climate emulation, 2024. 5
+[64] Andrea Nascetti, RITU YADAV, Kirill Brodt, Qixun Qu, Hongwei Fan, Yuri Shendryk, Isha Shah, and Christine
+Chung. Biomassters: A benchmark dataset for forest biomass estimation using multi-modal satellite time-series.
+In Thirty-seventh Conference on Neural Information Processing Systems Datasets and Benchmarks Track, 2023.
+5, 8, 9
+[65] V Coletta, V Marsocci, and R Ravanelli. 3dcd: A new dataset for 2d and 3d change detection using deep
+learning techniques. The International Archives of the Photogrammetry, Remote Sensing and Spatial Information
+Sciences, 43:1349–1354, 2022. 5
+23
+
+PANGAEA
+
+[66] Valerio Marsocci, Virginia Coletta, Roberta Ravanelli, Simone Scardapane, and Mattia Crespi. Inferring 3d
+change detection from bitemporal optical images. ISPRS Journal of Photogrammetry and Remote Sensing,
+196:325–339, 2023. 5
+[67] Rishi Bommasani, Drew A. Hudson, Ehsan Adeli, Russ Altman, Simran Arora, Sydney von Arx, Michael S.
+Bernstein, Jeannette Bohg, Antoine Bosselut, Emma Brunskill, Erik Brynjolfsson, S. Buch, Dallas Card, Rodrigo
+Castellon, Niladri S. Chatterji, Annie S. Chen, Kathleen A. Creel, Jared Davis, Dora Demszky, Chris Donahue,
+Moussa Doumbouya, Esin Durmus, Stefano Ermon, John Etchemendy, Kawin Ethayarajh, Li Fei-Fei, Chelsea
+Finn, Trevor Gale, Lauren E. Gillespie, Karan Goel, Noah D. Goodman, Shelby Grossman, Neel Guha, Tatsunori
+Hashimoto, Peter Henderson, John Hewitt, Daniel E. Ho, Jenny Hong, Kyle Hsu, Jing Huang, Thomas F.
+Icard, Saahil Jain, Dan Jurafsky, Pratyusha Kalluri, Siddharth Karamcheti, Geoff Keeling, Fereshte Khani,
+O. Khattab, Pang Wei Koh, Mark S. Krass, Ranjay Krishna, Rohith Kuditipudi, Ananya Kumar, Faisal Ladhak,
+Mina Lee, Tony Lee, Jure Leskovec, Isabelle Levent, Xiang Lisa Li, Xuechen Li, Tengyu Ma, Ali Malik,
+Christopher D. Manning, Suvir P. Mirchandani, Eric Mitchell, Zanele Munyikwa, Suraj Nair, Avanika Narayan,
+Deepak Narayanan, Benjamin Newman, Allen Nie, Juan Carlos Niebles, Hamed Nilforoshan, J. F. Nyarko, Giray
+Ogut, Laurel Orr, Isabel Papadimitriou, Joon Sung Park, Chris Piech, Eva Portelance, Christopher Potts, Aditi
+Raghunathan, Robert Reich, Hongyu Ren, Frieda Rong, Yusuf H. Roohani, Camilo Ruiz, Jack Ryan, Christopher
+R’e, Dorsa Sadigh, Shiori Sagawa, Keshav Santhanam, Andy Shih, Krishna Parasuram Srinivasan, Alex Tamkin,
+Rohan Taori, Armin W. Thomas, Florian Tramèr, Rose E. Wang, William Wang, Bohan Wu, Jiajun Wu, Yuhuai
+Wu, Sang Michael Xie, Michihiro Yasunaga, Jiaxuan You, Matei A. Zaharia, Michael Zhang, Tianyi Zhang,
+Xikun Zhang, Yuhui Zhang, Lucia Zheng, Kaitlyn Zhou, and Percy Liang. On the opportunities and risks of
+foundation models. ArXiv, 2021. 5
+[68] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry,
+Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. Learning transferable visual
+models from natural language supervision, 2021. 5
+[69] Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. Visual instruction tuning. In A. Oh, T. Naumann,
+A. Globerson, K. Saenko, M. Hardt, and S. Levine, editors, Advances in Neural Information Processing Systems,
+volume 36, pages 34892–34916. Curran Associates, Inc., 2023. 5
+[70] Christoph Schuhmann, Romain Beaumont, Richard Vencu, Cade Gordon, Ross Wightman, Mehdi Cherti,
+Theo Coombes, Aarush Katta, Clayton Mullis, Mitchell Wortsman, Patrick Schramowski, Srivatsa Kundurthy,
+Katherine Crowson, Ludwig Schmidt, Robert Kaczmarczyk, and Jenia Jitsev. Laion-5b: An open large-scale
+dataset for training next generation image-text models. In S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave,
+K. Cho, and A. Oh, editors, Advances in Neural Information Processing Systems, volume 35, pages 25278–25294.
+Curran Associates, Inc., 2022. 5
+[71] Johannes Jakubik, Sujit Roy, C. E. Phillips, Paolo Fraccaro, Denys Godwin, Bianca Zadrozny, Daniela Szwarcman, Carlos Gomes, Gabby Nyirjesy, Blair Edwards, Daiki Kimura, Naomi Simumba, Linsong Chu, S. Karthik
+Mukkavilli, Devyani Lambhate, Kamal Das, Ranjini Bangalore, Dario Oliveira, Michal Muszynski, Kumar
+Ankur, Muthukumaran Ramasubramanian, Iksha Gurung, Sam Khallaghi, Hanxi, Li, Michael Cecil, Maryam
+Ahmadi, Fatemeh Kordi, Hamed Alemohammad, Manil Maskey, Raghu Ganti, Kommy Weldemariam, and
+Rahul Ramachandran. Foundation models for generalist geospatial artificial intelligence, 2023. 5, 6, 8, 9, 10, 30
+[72] Yi Wang, Conrad M Albrecht, Nassim Ait Ali Braham, Lichao Mou, and Xiao Xiang Zhu. Self-supervised
+learning in remote sensing: A review. arXiv preprint arXiv:2206.13188, 2022. 5
+[73] Di Wang, Jing Zhang, Bo Du, Gui-Song Xia, and Dacheng Tao. An empirical study of remote sensing pretraining.
+IEEE Transactions on Geoscience and Remote Sensing, 2022. 5
+[74] Adam Stewart, Nils Lehmann, Isaac Corley, Yi Wang, Yi-Chia Chang, Nassim Ait Ait Ali Braham, Shradha
+Sehgal, Caleb Robinson, and Arindam Banerjee. Ssl4eo-l: Datasets and foundation models for landsat imagery.
+Advances in Neural Information Processing Systems, 36, 2024. 5, 9
+[75] Yi Wang, Nassim Ait Ali Braham, Zhitong Xiong, Chenying Liu, Conrad M. Albrecht, and Xiao Xiang Zhu.
+Ssl4eo-s12: A large-scale multimodal, multitemporal dataset for self-supervised learning in earth observation
+[software and data sets]. IEEE Geoscience and Remote Sensing Magazine, 11(3):98–106, 2023. 5, 11
+[76] Kaiming He, Xinlei Chen, Saining Xie, Yanghao Li, Piotr Dollár, and Ross Girshick. Masked autoencoders
+are scalable vision learners. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, pages 16000–16009, 2022. 5, 6
+[77] Alexei Baevski, Wei-Ning Hsu, Qiantong Xu, Arun Babu, Jiatao Gu, and Michael Auli. data2vec: A general
+framework for self-supervised learning in speech, vision and language. In Kamalika Chaudhuri, Stefanie
+Jegelka, Le Song, Csaba Szepesvari, Gang Niu, and Sivan Sabato, editors, Proceedings of the 39th International
+24
+
+PANGAEA
+
+Conference on Machine Learning, volume 162 of Proceedings of Machine Learning Research, pages 1298–1312.
+PMLR, 17–23 Jul 2022. 5
+[78] Mathilde Caron, Hugo Touvron, Ishan Misra, Hervé Jégou, Julien Mairal, Piotr Bojanowski, and Armand Joulin.
+Emerging properties in self-supervised vision transformers. arXiv preprint arXiv:2104.14294, 2021. 5, 6
+[79] Kaiming He, Haoqi Fan, Yuxin Wu, Saining Xie, and Ross Girshick. Momentum contrast for unsupervised visual
+representation learning. In Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit. (CVPR), pages 9729–9738,
+Seattle, WA, USA, 2020. 5
+[80] Zhitong Xiong, Yi Wang, Fahong Zhang, and Xiao Xiang Zhu. One for all: Toward unified foundation models
+for earth vision, 2024. 6
+[81] Keumgang Cha, Junghoon Seo, and Taekyung Lee. A billion-scale foundation model for remote sensing images.
+arXiv preprint arXiv:2304.05215, 2023. 6
+[82] Dilxat Muhtar, Xueliang Zhang, Pengfeng Xiao, Zhenshi Li, and Feng Gu. Cmid: A unified self-supervised
+learning framework for remote sensing image understanding. IEEE Transactions on Geoscience and Remote
+Sensing, 2023. 6
+[83] Xian Sun, Peijin Wang, Wanxuan Lu, Zicong Zhu, Xiaonan Lu, Qibin He, Junxi Li, Xuee Rong, Zhujun Yang,
+Hao Chang, et al. Ringmo: A remote sensing foundation model with masked image modeling. IEEE Transactions
+on Geoscience and Remote Sensing, 2022. 6
+[84] Fanglong Yao, Wanxuan Lu, Heming Yang, Liangyu Xu, Chenglong Liu, Leiyi Hu, Hongfeng Yu, Nayu Liu,
+Chubo Deng, Deke Tang, Changshuo Chen, Jiaqi Yu, Xian Sun, and Kun Fu. Ringmo-sense: Remote sensing
+foundation model for spatiotemporal prediction via spatiotemporal evolution disentangling. IEEE Transactions
+on Geoscience and Remote Sensing, 61:1–21, 2023. 6
+[85] Zhiyuan Yan, Junxi Li, Xuexue Li, Ruixue Zhou, Wenkai Zhang, Yingchao Feng, Wenhui Diao, Kun Fu, and
+Xian Sun. Ringmo-sam: A foundation model for segment anything in multimodal remote-sensing images. IEEE
+Transactions on Geoscience and Remote Sensing, 61:1–16, 2023. 6
+[86] Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi Mao, Chloe Rolland, Laura Gustafson, Tete Xiao, Spencer
+Whitehead, Alexander C. Berg, Wan-Yen Lo, Piotr Dollár, and Ross Girshick. Segment anything, 2023. 6
+[87] Mingming Zhang, Qingjie Liu, and Yunhong Wang. Ctxmim: Context-enhanced masked image modeling for
+remote sensing image understanding. arXiv preprint arXiv:2310.00022, 2023. 6
+[88] Matias Mendieta, Boran Han, Xingjian Shi, Yi Zhu, and Chen Chen. Towards geospatial foundation models via
+continual pretraining, 2023. 6
+[89] Boran Han, Shuai Zhang, Xingjian Shi, and Markus Reichstein. Bridging remote sensors with multisensor
+geospatial foundation models, 2024. 6
+[90] Yezhen Cong, Samar Khanna, Chenlin Meng, Patrick Liu, Erik Rozi, Yutong He, Marshall Burke, David B
+Lobell, and Stefano Ermon. Satmae: Pre-training transformers for temporal and multi-spectral satellite imagery.
+arXiv preprint arXiv:2207.08051, 2022. 6
+[91] Mubashir Noman, Muzammal Naseer, Hisham Cholakkal, Rao Muhammad Anwar, Salman Khan, and Fahad Shahbaz Khan. Rethinking transformers pre-training for multi-spectral satellite imagery, 2024. 6
+[92] Maofeng Tang, Andrei Cozma, Konstantinos Georgiou, and Hairong Qi. Cross-scale mae: A tale of multiscale
+exploitation in remote sensing. Advances in Neural Information Processing Systems, 36, 2024. 6
+[93] Jeremy Irvin, Lucas Tao, Joanne Zhou, Yuntao Ma, Langston Nashold, Benjamin Liu, and Andrew Y. Ng. Usat:
+A unified self-supervised encoder for multi-sensor satellite imagery, 2023. 6
+[94] Di Wang, Qiming Zhang, Yufei Xu, Jing Zhang, Bo Du, Dacheng Tao, and Liangpei Zhang. Advancing plain
+vision transformer towards remote sensing foundation model. IEEE Transactions on Geoscience and Remote
+Sensing, pages 1–1, 2022. 6
+[95] Yi Wang, Hugo Hernández Hernández, Conrad M Albrecht, and Xiao Xiang Zhu. Feature guided masked
+autoencoder for self-supervised learning in remote sensing. arXiv preprint arXiv:2310.18653, 2023. 6
+[96] Caleb S. Spradlin, Jordan A. Caraballo-Vega, Jian Li, Mark L. Carroll, Jie Gong, and Paul M. Montesano.
+Satvision-toa: A geospatial foundation model for coarse-resolution all-sky remote sensing imagery, 2024. 6
+[97] Yingchao Feng, Peijin Wang, Wenhui Diao, Qibin He, Huiyang Hu, Hanbo Bi, Xian Sun, and Kun Fu. A
+self-supervised cross-modal remote sensing foundation model with multi-domain representation and crossdomain fusion. In IGARSS 2023 - 2023 IEEE International Geoscience and Remote Sensing Symposium, pages
+2239–2242, 2023. 6
+25
+
+PANGAEA
+
+[98] Xuyang Li, Danfeng Hong, and Jocelyn Chanussot. S2mae: A spatial-spectral pretraining foundation model
+for spectral remote sensing data. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, pages 24088–24097, 2024. 6
+[99] Guillaume Astruc, Nicolas Gonthier, Clement Mallet, and Loic Landrieu. Omnisat: Self-supervised modality
+fusion for earth observation, 2024. 6
+[100] Danfeng Hong, Bing Zhang, Xuyang Li, Yuxuan Li, Chenyu Li, Jing Yao, Naoto Yokoya, Hao Li, Pedram
+Ghamisi, Xiuping Jia, Antonio Plaza, Paolo Gamba, Jon Atli Benediktsson, and Jocelyn Chanussot. Spectralgpt:
+Spectral remote sensing foundation model. IEEE Transactions on Pattern Analysis and Machine Intelligence,
+page 1–18, 2024. 6, 10, 11
+[101] Zhitong Xiong, Yi Wang, Fahong Zhang, Adam J. Stewart, Joëlle Hanna, Damian Borth, Ioannis Papoutsis,
+Bertrand Le Saux, Gustau Camps-Valls, and Xiao Xiang Zhu. Neural plasticity-inspired foundation model for
+observing the earth crossing modalities, 2024. 6, 10
+[102] Vishal Nedungadi, Ankit Kariryaa, Stefan Oehmcke, Serge Belongie, Christian Igel, and Nico Lang. Mmearth:
+Exploring multi-modal pretext tasks for geospatial representation learning. arXiv preprint arXiv:2405.02771,
+2024. 6
+[103] Gabriel Tseng, Ruben Cartuyvels, Ivan Zvonkov, Mirali Purohit, David Rolnick, and Hannah Kerner. Lightweight,
+pre-trained transformers for remote sensing timeseries, 2024. 6
+[104] Michail Tarasiou and Stefanos Zafeiriou. Embedding earth: Self-supervised contrastive pre-training for dense
+land cover classification, 2022. 6
+[105] Kumar Ayush, Burak Uzkent, Chenlin Meng, Kumar Tanmay, Marshall Burke, David Lobell, and Stefano
+Ermon. Geography-aware self-supervised learning. In Proceedings of the IEEE/CVF International Conference
+on Computer Vision, pages 10181–10190, 2021. 6
+[106] Oscar Manas, Alexandre Lacoste, Xavier Giró-i Nieto, David Vazquez, and Pau Rodriguez. Seasonal contrast:
+Unsupervised pre-training from uncurated remote sensing data. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision, pages 9414–9423, 2021. 6
+[107] Utkarsh Mall, Bharath Hariharan, and Kavita Bala. Change-aware sampling and contrastive learning for satellite
+images. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pages 5261–5270, June 2023. 6
+[108] Peri Akiva, Matthew Purri, and Matthew Leotta. Self-supervised material and texture representation learning for
+remote sensing tasks. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+(CVPR), pages 8203–8215, June 2022. 6
+[109] Xin Guo, Jiangwei Lao, Bo Dang, Yingying Zhang, Lei Yu, Lixiang Ru, Liheng Zhong, Ziyuan Huang, Kang
+Wu, Dingxiang Hu, Huimei He, Jian Wang, Jingdong Chen, Ming Yang, Yongjun Zhang, and Yansheng Li.
+Skysense: A multi-modal remote sensing foundation model towards universal interpretation for earth observation
+imagery, 2024. 6
+[110] Anthony Fuller, Koreen Millard, and James R Green. Transfer learning with pretrained remote sensing transformers. arXiv preprint arXiv:2209.14969, 2022. 6, 7
+[111] Ziyue Huang, Mingming Zhang, Yuan Gong, Qingjie Liu, and Yunhong Wang. Generic knowledge boosted
+pre-training for remote sensing images. IEEE Transactions on Geoscience and Remote Sensing, 2024. 6
+[112] Jiayuan Tian, Jie Lei, Jiaqing Zhang, Weiying Xie, and Yunsong Li. Swimdiff: Scene-wide matching contrastive
+learning with diffusion constraint for remote sensing image. IEEE Transactions on Geoscience and Remote
+Sensing, 2024. 6
+[113] Yi Wang, Conrad M Albrecht, and Xiao Xiang Zhu. Self-supervised vision transformers for joint sar-optical
+representation learning. In IGARSS 2022-2022 IEEE International Geoscience and Remote Sensing Symposium,
+pages 139–142. IEEE, 2022. 6
+[114] Valerio Marsocci and Nicolas Audebert. Cross-sensor self-supervised training and alignment for remote sensing,
+2024. 6, 10
+[115] Colorado J Reed, Xiangyu Yue, Ani Nrusimha, Sayna Ebrahimi, Vivek Vijaykumar, Richard Mao, Bo Li,
+Shanghang Zhang, Devin Guillory, Sean Metzger, Kurt Keutzer, and Trevor Darrell. Self-supervised pretraining
+improves self-supervised pretraining. In Proceedings of the IEEE/CVF Winter Conference on Applications of
+Computer Vision (WACV), pages 2584–2594, January 2022. 6
+[116] Tong Zhang, Peng Gao, Hao Dong, Yin Zhuang, Guanqun Wang, Wei Zhang, and He Chen. Consecutive
+pre-training: A knowledge transfer learning strategy with relevant unlabeled data for remote sensing domain.
+Remote Sensing, 14(22):5675, 2022. 6
+26
+
+PANGAEA
+
+[117] Jure Zbontar, Li Jing, Ishan Misra, Yann LeCun, and Stéphane Deny. Barlow twins: Self-supervised learning via
+redundancy reduction. In International conference on machine learning, pages 12310–12320. PMLR, 2021. 6
+[118] Sijie Zhao, Hao Chen, Xueliang Zhang, Pengfeng Xiao, Lei Bai, and Wanli Ouyang. Rs-mamba for large remote
+sensing image dense prediction, 2024. 6
+[119] Keyan Chen, Bowen Chen, Chenyang Liu, Wenyuan Li, Zhengxia Zou, and Zhenwei Shi. Rsmamba: Remote
+sensing image classification with state space model, 2024. 6
+[120] Yi Wang, Conrad M Albrecht, Nassim Ait Ali Braham, Chenying Liu, Zhitong Xiong, and Xiao Xiang Zhu.
+Decur: decoupling common & unique representations for multimodal self-supervision, 2023. 6
+[121] Albert Gu and Tri Dao. Mamba: Linear-time sequence modeling with selective state spaces, 2023. 6
+[122] Xiang Li, Congcong Wen, Yuan Hu, Zhenghang Yuan, and Xiao Xiang Zhu. Vision-language models in remote
+sensing: Current progress and future trends, 2024. 6
+[123] Utkarsh Mall, Cheng Perng Phoo, Meilin Kelsey Liu, Carl Vondrick, Bharath Hariharan, and Kavita Bala.
+Remote sensing vision-language foundation models without annotations via ground remote alignment, 2023. 6
+[124] Zhonghang Li, Lianghao Xia, Jiabin Tang, Yong Xu, Lei Shi, Long Xia, Dawei Yin, and Chao Huang. Urbangpt:
+Spatio-temporal large language models. In Proceedings of the 30th ACM SIGKDD Conference on Knowledge
+Discovery and Data Mining, pages 5351–5362, 2024. 6
+[125] Xusen Guo, Qiming Zhang, Junyue Jiang, Mingxing Peng, Meixin Zhu, and Hao Frank Yang. Towards
+explainable traffic flow prediction with large language models. Communications in Transportation Research,
+4:100150, 2024. 6
+[126] Samar Khanna, Patrick Liu, Linqi Zhou, Chenlin Meng, Robin Rombach, Marshall Burke, David Lobell, and
+Stefano Ermon. Diffusionsat: A generative foundation model for satellite imagery, 2023. 6
+[127] Datao Tang, Xiangyong Cao, Xingsong Hou, Zhongyuan Jiang, and Deyu Meng. Crs-diff: Controllable
+generative remote sensing foundation model, 2024. 6
+[128] Zhiping Yu, Chenyang Liu, Liqin Liu, Zhenwei Shi, and Zhengxia Zou. Metaearth: A generative foundation
+model for global-scale remote sensing image generation, 2024. 6
+[129] Jakob Hackstein, Gencer Sumbul, Kai Norman Clasen, and Begüm Demir. Exploring masked autoencoders for
+sensor-agnostic image retrieval in remote sensing, 2024. 6
+[130] Matt Allen, Francisco Dorr, Joseph A. Gallego-Mejia, Laura Martínez-Ferrer, Anna Jungbluth, Freddie Kalaitzis,
+and Raúl Ramos-Pollán. Large scale masked autoencoding for reducing label requirements on sar data, 2023. 6
+[131] Laura Martínez-Ferrer, Anna Jungbluth, Joseph A. Gallego-Mejia, Matt Allen, Francisco Dorr, Freddie Kalaitzis,
+and Raúl Ramos-Pollán. Exploring generalisability of self-distillation with no labels for sar-based vegetation
+prediction, 2023. 6
+[132] Joseph A. Gallego-Mejia, Anna Jungbluth, Laura Martínez-Ferrer, Matt Allen, Francisco Dorr, Freddie Kalaitzis,
+and Raúl Ramos-Pollán. Exploring dino: Emergent properties and limitations for synthetic aperture radar
+imagery, 2023. 6
+[133] Xiao Wang, Aristeidis Tsaris, Siyan Liu, Jong-Youl Choi, Ming Fan, Wei Zhang, Junqi Yin, Moetasim Ashfaq,
+Dan Lu, and Prasanna Balaprakash. Orbit: Oak ridge base foundation model for earth system predictability,
+2024. 6
+[134] Aristeidis Tsaris, Philipe Ambrozio Dias, Abhishek Potnis, Junqi Yin, Feiyi Wang, and Dalton Lunga. Pretraining
+billion-scale geospatial foundational models on frontier, 2024. 6
+[135] Zhe Dong, Yanfeng Gu, and Tianzhu Liu. Upetu: A unified parameter-efficient fine-tuning framework for remote
+sensing foundation model. IEEE Transactions on Geoscience and Remote Sensing, 2024. 7
+[136] Keyan Chen, Chengyang Liu, Wenyuan Li, Zili Liu, Hao Chen, Haotian Zhang, Zhengxia Zou, and Zhenwei Shi.
+Time travelling pixels: Bitemporal features integration with foundation model for remote sensing image change
+detection, 2023. 7
+[137] Kaiyu Li, Xiangyong Cao, and Deyu Meng. A new learning paradigm for foundation model-based remote
+sensing change detection, 2024. 7
+[138] Xin He, Yushi Chen, Lingbo Huang, Danfeng Hong, and Qian Du. Foundation model-based multimodal remote
+sensing data classification. IEEE Transactions on Geoscience and Remote Sensing, 62:1–17, 2024. 7
+[139] Michael J. Smith, Luke Fleming, and James E. Geach. Earthpt: a time series foundation model for earth
+observation, 2024. 7
+27
+
+PANGAEA
+
+[140] Weijie L, Wei Yang, Yuenan Hou, Li Liu, Yongxiang Liu, and Xiang Li. SARATR-X: a foundation model for
+synthetic aperture radar images target recognition. arXiv, 2405.09365, 2024. 7
+[141] Edoardo Arnaudo, Jacopo Lungo Vaschetti, Lorenzo Innocenti, Luca Barco, Davide Lisi, Vanina Fissore, and
+Claudio Rossi. Fmars: Annotating remote sensing images for disaster management using foundation models,
+2024. 7
+[142] Junyan Lin, Feng Gao, Xiaocheng Shi, Junyu Dong, and Qian Du. Ss-mae: Spatial-spectral masked auto-encoder
+for multi-source remote sensing image classification, 2023. 7
+[143] Ziyang Gong, Zhixiang Wei, Di Wang, Xianzheng Ma, Hongruixuan Chen, Yuru Jia, Yupeng Deng, Zhenming
+Ji, Xiangwei Zhu, Naoto Yokoya, Jing Zhang, Bo Du, and Liangpei Zhang. Crossearth: Geospatial vision
+foundation model for domain generalizable remote sensing semantic segmentation, 2024. 7
+[144] Mingze Wang, Keyan Chen, Lili Su, Cilin Yan, Sheng Xu, Haotian Zhang, Pengcheng Yuan, Xiaolong Jiang, and
+Baochang Zhang. Rsbuilding: Towards general remote sensing image building extraction and change detection
+with foundation model, 2024. 7
+[145] Nikolaos Ioannis Bountos, Arthur Ouaknine, and David Rolnick. Fomo-bench: a multi-modal, multi-scale and
+multi-task forest monitoring benchmark for remote sensing foundation models, 2024. 7
+[146] Gerald Baier, Antonin Deschemps, Michael Schmitt, and Naoto Yokoya. Synthesizing optical and sar imagery
+from land cover maps and auxiliary raster data. IEEE Transactions on Geoscience and Remote Sensing, 60:1–12,
+2021. 7
+[147] Dominik Koßmann, Viktor Brack, and Thorsten Wilhelm. Seasonet: A seasonal scene classification, segmentation
+and retrieval dataset for satellite imagery over germany. In IGARSS 2022-2022 IEEE International Geoscience
+and Remote Sensing Symposium, pages 243–246. IEEE, 2022. 7
+[148] Li Xiang, Ding Jian, and Elhoseiny Mohamed. Vrsbench: A versatile vision-language benchmark dataset for
+remote sensing image understanding. arXiv:2406.12384, 2024. 7
+[149] Baichuan Zhou, Haote Yang, Dairong Chen, Junyan Ye, Tianyi Bai, Jinhua Yu, Songyang Zhang, Dahua Lin,
+Conghui He, and Weijia Li. Urbench: A comprehensive benchmark for evaluating large multimodal models in
+multi-view urban scenarios. arXiv preprint arXiv:2408.17267, 2024. 7
+[150] Zhang Chenhui and Wang Sherrie. Good at captioning, bad at counting: Benchmarking gpt-4v on earth
+observation data. arXiv preprint arXiv: 2401.17600, 2024. 7
+[151] Katerina Kikaki, Ioannis Kakogeorgiou, Ibrahim Hoteit, and Konstantinos Karantzalos. Detecting marine
+pollutants and sea surface features with deep learning in sentinel-2 imagery. ISPRS Journal of Photogrammetry
+and Remote Sensing, 210:39–54, 2024. 8, 9, 31
+[152] Vivien Sainte Fare Garnot and Loic Landrieu. Panoptic segmentation of satellite image time series with
+convolutional temporal attention networks. ICCV, 2021. 8, 9
+[153] Clément Rambour, Nicolas Audebert, E Koeniguer, Bertrand Le Saux, M Crucianu, and Mihai Datcu. Flood
+detection in time series of optical and sar images. The International Archives of the Photogrammetry, Remote
+Sensing and Spatial Information Sciences, 43(B2):1343–1346, 2020. 8, 9
+[154] Xin-Yi Tong, Gui-Song Xia, and Xiao Xiang Zhu. Enabling country-scale land cover mapping with meterresolution satellite imagery. ISPRS Journal of Photogrammetry and Remote Sensing, 196:178–196, 2023.
+8
+[155] Rose Rustowicz, Robin Cheong, Lijing Wang, Stefano Ermon, Marshall Burke, and David Lobell. Semantic
+segmentation of crop type in africa: A novel dataset and analysis of deep learning methods. In Proceedings of
+the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Workshops, June 2019. 8, 9, 39
+[156] Claudio Persello, Jeroen Grift, Xinyan Fan, Claudia Paris, Ronny Hänsch, Mila Koeva, and Andrew Nelson.
+Ai4smallfarms: A dataset for crop field delineation in southeast asian smallholder farms. IEEE Geoscience and
+Remote Sensing Letters, 20:1–5, 2023. 8, 9
+[157] Panagiotis Agrafiotis, Łukasz Janowski, Dimitrios Skarlatos, and Begüm Demir. Magicbathynet: A multimodal
+remote sensing dataset for bathymetry prediction and pixel-based classification in shallow waters, 2024. 8
+[158] Derrick Bonafilia, Beth Tellman, Tyler Anderson, and Erica Issenberg. Sen1floods11: A georeferenced dataset
+to train and test deep learning flood algorithms for sentinel-1. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition (CVPR) Workshops, June 2020. 8, 33
+[159] Tete Xiao, Yingcheng Liu, Bolei Zhou, Yuning Jiang, and Jian Sun. Unified perceptual parsing for scene
+understanding. In Proceedings of the European conference on computer vision (ECCV), pages 418–434, 2018.
+10, 11
+28
+
+PANGAEA
+
+[160] Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical image
+segmentation. In International Conference on Medical image computing and computer-assisted intervention,
+pages 234–241. Springer, 2015. 10, 11
+[161] Matias Mendieta, Boran Han, Xingjian Shi, Yi Zhu, Chen Chen, and Mu Li. Gfm: Building geospatial foundation
+models via continual pretraining. arXiv preprint arXiv:2302.04476, 2023. 10
+[162] Fan Liu, Delong Chen, Zhangqingyun Guan, Xiaocong Zhou, Jiale Zhu, Qiaolin Ye, Liyong Fu, and Jun Zhou.
+Remoteclip: A vision language foundation model for remote sensing, 2024. 10
+[163] Alexey Dosovitskiy. An image is worth 16x16 words: Transformers for image recognition at scale. arXiv
+preprint arXiv:2010.11929, 2020. 11
+[164] Chia-Yu Hsu, Wenwen Li, and Sizhe Wang. Geospatial foundation models for image analysis: evaluating and
+enhancing nasa-ibm prithvi’s domain adaptability. International Journal of Geographical Information Science,
+pages 1–30, 2024. 11
+[165] Vivien Sainte Fare Garnot and Loic Landrieu. Lightweight temporal self-Attention for classifying satellite
+images time series. In Workshop on Advanced Analytics and Learning on Temporal Data, AALTD, 2020. 12
+[166] Victor Durnov. xview2 1st place solution. 35
+[167] Adam Van Etten, Daniel Hogan, Jesus Martinez Manso, Jacob Shermeyer, Nicholas Weir, and Ryan Lewis. The
+multi-temporal urban development spacenet dataset. In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition, pages 6398–6407, 2021. 41
+[168] Sebastian Hafner, Yifang Ban, and Andrea Nascetti. Urban change detection using a dual-task siamese network
+and semi-supervised learning. In IGARSS 2022-2022 IEEE International Geoscience and Remote Sensing
+Symposium, pages 1071–1074. IEEE, 2022. 41
+
+29
+
+PANGAEA
+
+Appendix
+A
+
+Dataset Details and Extensive Results
+
+Below, we provide a detailed description of the benchmark datasets, along with the extensive experimental results
+including additional metrics.
+A.1
+
+HLS Burn Scars
+
+HLS Burn Scars [71] contains Harmonized Landsat and Sentinel-2 imagery of burn scars and the associated masks for
+2018-2021 over the contiguous United States. There are 804 512x512 scenes. Scenes contain six bands (Blue - B02,
+Green - B03, Red - B04, NIR - B8A, SW 1 - B11, SW 2 - B12), and masks have one band (with values 1 = Burn scar, 0
+= Not burned, -1 = Missing data). For satellite scenes, each band has already been converted to reflectance. The class
+distribution is 11% for Burn Scar, 88% for Not Burned, and 1% for No Data. The 804 files have been randomly split
+into training (2/3) and validation (1/3) directories, each containing the masks, scenes, and index files. To create the
+dataset, after co-locating the shapefile and HLS scene, the 512x512 chip was formed by taking a window with the burn
+scar in the center. Burn scars near the edges of HLS tiles are offset from the center. Images were manually filtered for
+cloud cover and missing data to provide as clean a scene as possible and burn scar presence was also manually verified.
+Some example images and labels are displayed in Fig. A1.
+
+(a) Image 1
+
+(b) Label 1
+
+(c) Image 2
+
+(d) Label 2
+
+(e) Image 3
+
+(f) Label 3
+
+Figure A1: Example images and labels of HLS Burn Scars (Location: USA. Domain: Wildfire). The images are
+visualized with B4, B3 and B2 bands.
+
+A.1.1
+
+Extensive Results
+
+Table A1: Results for the HLS Burn Scars comparison using stratified sampling with 10%, 50%, and 100% labels for
+best and worst models from Table 5
+
+Model
+
+10%
+
+mIoU ↑
+
+m-F1 ↑
+
+m-prec ↑
+
+50% 100% 10%
+
+50% 100% 10%
+
+50% 100% 10%
+
+m-rec ↑
+
+m-acc ↑
+
+50% 100% 10%
+
+50% 100%
+
+CROMA
+76.44 81.52 81.95 85.42 89.10 89.40 85.51 88.31 89.13 85.32 89.94 89.68 95.09 96.41 96.46
+DOFA
+71.98 78.02 78.96 81.77 86.60 87.27 79.45 86.67 85.84 84.63 86.54 88.86 94.33 95.49 95.89
+GFM-Swin
+67.23 74.36 76.17 78.02 83.79 85.24 83.30 83.57 86.92 74.61 84.01 83.76 91.28 94.59 94.81
+Prithvi
+77.73 80.89 82.67 86.34 88.66 89.90 83.71 87.44 90.54 89.55 89.97 89.29 95.75 96.31 96.55
+RemoteCLIP 69.40 74.29 75.55 79.59 83.74 84.77 78.36 84.09 86.54 80.98 83.41 83.21 93.43 94.48 94.63
+SatlasNet
+74.79 75.97 79.69 84.08 85.01 87.80 81.78 83.13 86.49 86.85 87.19 89.25 95.02 95.24 96.05
+Scale-MAE
+75.47 75.47 76.71 84.66 84.66 85.64 84.16 84.16 86.96 85.17 85.17 84.44 94.92 94.92 95.00
+SpectralGPT 83.35 76.40 80.47 90.67 85.50 88.36 94.49 87.87 87.31 88.00 83.51 89.49 93.54 94.33 96.20
+S12-MoCo
+73.11 79.79 80.76 82.85 87.90 88.58 84.66 88.68 88.59 81.27 87.16 88.56 93.92 95.85 96.16
+S12-DINO
+75.93 80.12 81.44 84.99 88.13 89.04 83.58 88.63 88.06 86.57 87.66 90.08 95.16 95.96 96.41
+S12-MAE
+76.60 80.13 80.86 85.49 88.14 88.66 83.47 88.88 89.88 87.86 87.44 87.53 95.41 95.94 96.07
+S12-Data2Vec 74.38 79.82 81.14 83.78 87.91 88.83 82.78 87.28 87.73 84.86 88.56 90.02 94.71 96.00 96.35
+UNet Baseline 79.46 82.39 84.51 87.60 89.68 91.11 83.86 86.61 88.66 92.57 93.49 94.00 96.25 96.80 97.19
+ViT Baseline 75.92 78.17 81.58 84.98 86.70 89.16 83.32 86.12 90.20 86.87 87.30 88.19 95.20 95.60 96.26
+
+Table A1 presents a comprehensive comparison of models on the HLS Burn Scars dataset using stratified sampling with
+10%, 50%, and 100% labeled data.
+30
+
+PANGAEA
+
+The UNet Baseline achieves the best performance across all metrics for the 100% label setting, with the highest mIoU
+(84.51%), m-f1 (91.11%), and m-Accuracy (97.19%). This demonstrates the robustness of the UNet architecture when
+sufficient labeled data is available.
+The Prithvi model achieves the second-best results in the 100% label setting, with mIoU (82.67%), m-f1 (89.90%), and
+m-Accuracy (96.55%). These results closely follow the UNet Baseline, indicating its competitiveness as an alternative
+model.
+At 10% labels, SpectralGPT excels with the highest mIoU (83.35%) and m-f1 (90.67%), outperforming all other models.
+Its strong results in this low-label regime suggest robustness in low-supervision scenarios. However, its performance
+decreases at higher label proportions, which could indicate limitations in scalability or overfitting to specific data
+distributions.
+Across all models, in average, performance improves significantly with increased labeled data, reflecting the importance
+of supervision for these tasks. The most substantial performance gains occur between 10% and 50% labels, indicating
+that moderate amounts of labeled data can significantly boost model effectiveness.
+The ViT Baseline, added for comparison, demonstrates competitive performance at 100% labels with mIoU (81.58%),
+m-f1 (89.16%), and m-Accuracy (96.26%). While it does not surpass the UNet Baseline, its results highlight the
+potential of Vision Transformers for remote sensing tasks.
+A.2
+
+MADOS
+
+The Marine Debris and Oil Spill (MADOS) [151] dataset contains marine pollutants under a diverse set of locations
+and sea surface features. The imagery contains multi-spectral (Bands 1-8A, 11 & 12) Sentinel-2 data from 174 scenes,
+with approximately 1.5M annotated pixels and a resolution of 10 to 60 meters, depending on the band. After processing,
+the dataset contains 2803 tiles, each 240x240 pixels in size. The authors define train, validation, and test splits based on
+location and date, with an approximate ratio of 50% / 25% / 25%.
+Four major classes are assigned to different types of backgrounds: Marine Water (34.8%), Turbid Water (11.7%),
+Sediment-Laden Water(20.6%), and Shallow Water(9.2%). These and the Oil Spill (18.5%) category represent around
+95% of all labeled pixels in the data, with the remaining 5% of labels distributed among the remaining 10 classes. The
+15 classes have a sparse distribution over scenes, and examples of multiple classes in a tile are exceedingly rare.
+Most pixels in the dataset are unlabeled, causing some batches of randomly selected data to have no valid labels and
+consequently an invalid loss value. To avoid this problem we employ focus cropping, which only selects crops with at
+least one valid label. Some examples are shown in Fig. A2
+
+(a) Tile 1
+
+(b) Label 1
+
+(c) Tile 2
+
+(d) Label 2
+
+(e) Tile 3
+
+(f) Label 3
+
+Figure A2: Example images and labels from MADOS. (Location: Global. Domain: Marine.) The images are visualized
+with B4, B3, B2 bands. Black labels represent unlabeled pixels.
+
+A.2.1
+
+Extensive Results
+
+Table A2 presents a more detailed breakdown of results on the MADOS dataset. The mean accuracy metric places more
+emphasis on the more abundant categories, and is therefore useful for identifying GFMs that do not capture the rare
+classes well.
+CROMA achieves outstanding results in both m-f1 and mIoU scores while coming in 4th on accuracy, and our evaluation
+of the per-class results confirms that this is because of its great performance in the rarer classes. We conjecture that the
+large variety of bands used by the model, together with its modality-focused pre-training helps with differentiating
+between the high number of visually similar classes.
+31
+
+PANGAEA
+
+Table A2: Results for MADOS dataset, best results in bold, second best underlined.
+Model
+
+mIoU ↑
+
+m-F1 ↑
+
+m-prec ↑
+
+m-rec ↑
+
+m-acc ↑
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-Data2Vec
+S12-DINO
+S12-MAE
+S12-MoCo
+
+67.55
+59.58
+64.71
+49.98
+60.00
+55.86
+57.32
+57.99
+44.36
+49.38
+49.90
+51.76
+
+77.19
+68.19
+74.23
+60.26
+70.48
+67.03
+68.50
+70.18
+55.18
+60.65
+60.79
+63.02
+
+91.38
+92.12
+94.97
+83.10
+91.63
+86.92
+91.28
+84.95
+80.18
+83.25
+84.29
+84.88
+
+90.85
+94.26
+94.77
+83.58
+90.59
+85.68
+91.03
+84.97
+80.58
+82.93
+83.79
+84.64
+
+91.04
+92.81
+95.30
+83.92
+91.64
+87.56
+90.92
+85.27
+82.41
+83.66
+84.70
+85.21
+
+UNet Baseline
+ViT Baseline
+
+54.79
+48.19
+
+65.97
+58.78
+
+85.20
+58.14
+
+84.67
+62.59
+
+85.61
+88.00
+
+GFM-Swin performs exceptionally well in the three major water categories while performing adequately in the rarer
+classes. This results in a high mean accuracy score, but for practical labeling of the target classes RemoteCLIP and
+SpectralGPT are both better candidates, since they achieve high IoU scores without over-focusing on the background
+categories.
+Despite using all Sentinel-2 bands, SSL4EO models perform among the worst on the mIoU score, while keeping up in
+the mean accuracy metric. Investigation of the per-class results shows that the models perform well on water categories
+while performing significantly worse on the much rarer classes of interest. This could mean that the EO-specific
+adaptations that other models employ are important for detecting the rare classes. Another possible explanation is that
+the self-supervised methods combined with the mainly land-focused SSL4EO-S12 dataset do not provide good enough
+features for marine environments.
+The best GFMs comfortably outperform both supervised baselines, highlighting the importance of foundation models
+for sparsely labeled datasets such as MADOS. Despite this, the UNet model achieves a very respectable score that
+places it in the middle of the pack.
+A.3
+
+PASTIS-R
+
+(a) S2 from 2018-09-29
+
+(b) S2 from 2018-09-29
+
+(c) S1 from 2018-10-04
+
+(d) S1 from 2018-10-04
+
+(e) Segmentation label
+
+Figure A3: Example time series data of PASTIS-R (Location: France. Domain: Agriculture.). The Sentinel-1 images
+are visualized by taking VV, VH, VV-VH bands , and the Sentinel-2 images are visualized by taking B4, B3, and B2
+bands.
+PASTIS is a comprehensive benchmark dataset designed for panoptic and semantic segmentation of agricultural parcels
+using satellite time series. It includes 2,433 image patches captured across the French metropolitan area, each with
+detailed panoptic annotations, providing both instance indices and semantic labels for every pixel. The original dataset
+is built using Sentinel-2 multi-spectral imagery, offering time series data with variable lengths for each patch. The
+Sentinel-2 available bands are B2, B3, B4, B5, B6, B7, B8, B8A, B11 and B12. To test the performance of the model
+foundations on multi-modal settings, we used the PASTIS-R version of the dataset. This extended dataset introduces
+aligned Sentinel-1 radar observations. This extension includes approximately 70 radar observations from both ascending
+32
+
+PANGAEA
+
+and descending orbits for each of the 2,433 patches, complementing the optical data from Sentinel-2. In line with the
+multi-temporal setup of this paper, we have kept 6 captures evenly distributed over time for each satellite time series.
+A.3.1
+
+Extensive Results
+
+In the next paragraph, we present the results obtained on the PASTIS-R dataset ( Table A3), before considering the
+results obtained by reducing the size of the dataset, i.e. by reducing the number of samples seen during training
+( Table A4 and Table A5). Initially, we observe that two models stand out and achieve the best performance on the
+PASTIS-R dataset: CROMA on the optical modality and S12-DINO. Indeed, for all the metrics used in this benchmark,
+these two models produce the best results. The S12-DINO model is the strongest model when the temporal fusion
+strategy is linear, with a mIoU of 32.45. For the L-TAE strategy, the CROMA optical model performs best, with a mIoU
+of 36.18.
+In general, L-TAE fusion produces better results than linear fusion, e.g. +6.46% mIoU points for CROMA, +7.38%
+mIoU points for s12-Data2Vec and +8.30% mIoU points for s12-MoCo.
+Interestingly, we can see that in the case of our setup and the PASTIS-R dataset, multi-modality doesn’t seem to bring
+any particular gain: the performances obtained by CROMA joint, i.e. on the optical and SAR modalities are worse
+than those obtained only on the optical modality (32.32% vs 38.51% mIoU). This underperformance seems to be partly
+explained by the poor results obtained by the various models solely on SAR images: 21.61% for CROMA + L-TAE and
+14.20% for S12-MAE.
+By decreasing the proportion of the dataset seen during training (respectively Table A4 and Table A5 for linear
+multi-temporal fusion and L-TAE) we observe that performance varies little, e.g. 34.32% mIoU for s12-Data2Vec on
+the full dataset, 33.42% mIoU on 50% of the dataset and 33.09 on only 10% (for L-TAE strategy). Nevertheless, a
+performance drop of 2.78 mIoU points (24.74 mIoU on 10% and 27.53 mIoU on 100%) is observed for SpectralGPT.
+Table A3: Results for PASTIS-R dataset with 100% of the data, best results in bold, second best underlined.
+mIoU ↑
+
+Linear
+
+L-TAE
+
+m-prec ↑
+Linear
+
+L-TAE
+
+m-rec ↑
+Linear
+
+L-TAE
+
+m-acc ↑
+
+Model
+
+Modality
+
+Linear
+
+CROMA
+CROMA
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-MAE
+S12-Data2Vec
+
+joint
+optical
+sar
+joint
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+sar
+optical
+
+27.75
+32.32
+32.06
+38.51
+20.68
+21.61
+24.49
+30.02
+15.13
+21.24
+27.40
+33.93
+13.31
+18.23
+17.51
+11.74
+24.55
+27.52
+35.44
+26.09
+34.49
+32.45
+36.18
+27.06
+32.03
+18.81
+14.20
+26.94
+34.32
+
+39.91
+45.27
+44.92
+52.53
+30.12
+31.93
+35.88
+42.37
+23.45
+32.02
+39.56
+46.95
+20.83
+27.57
+27.14
+17.45
+35.75
+40.05
+49.19
+38.32
+48.07
+45.86
+49.89
+39.22
+45.23
+28.08
+21.71
+39.22
+47.61
+
+36.79
+44.09
+41.97
+48.76
+28.82
+32.22
+33.28
+39.45
+21.71
+28.71
+36.69
+43.95
+21.34
+26.57
+23.97
+17.34
+33.64
+38.22
+46.60
+35.08
+44.97
+42.34
+46.17
+35.32
+41.09
+26.41
+21.45
+36.34
+44.89
+
+49.28
+51.33
+52.95
+62.66
+34.29
+39.43
+43.64
+50.54
+30.18
+45.36
+47.22
+56.46
+23.17
+32.46
+38.03
+28.00
+43.69
+46.59
+56.67
+47.05
+57.21
+54.95
+60.88
+50.61
+56.21
+18.81
+34.13
+47.01
+59.39
+
+71.93
+74.47
+74.58
+77.76
+68.72
+66.91
+70.29
+74.09
+62.11
+67.39
+71.60
+75.75
+58.39
+65.80
+63.04
+61.91
+71.19
+72.84
+76.11
+69.98
+75.43
+73.60
+76.05
+69.62
+74.09
+66.40
+58.48
+70.56
+75.28
+
+UNet Baseline
+ViT Baseline
+
+optical
+optical
+
+31.60
+36.57
+38.53
+
+43.52
+50.03
+54.89
+
+39.37
+46.38
+51.53
+
+51.57
+59.46
+62.61
+
+72.12
+75.96
+78.34
+
+A.4
+
+L-TAE
+
+m-F1 ↑
+
+Linear
+
+L-TAE
+
+Sen1Floods11
+
+Sen1Floods11[158] offers global flood mapping, featuring two bands (VV and VH) from Sentinel-1, all spectral bands
+from Sentinel-2, and manually labeled surface water, which includes both permanent and flood water. The dataset
+comprises 4,831 chips, each with dimensions of 512 x 512 pixels at a 10-meter resolution, encompassing 11 distinct
+flood events and covering a total area of 120,406 square kilometers. The hand-labeled data is split into training,
+validation, and testing data using a random 60-20-20 split. The cloudy pixels are labeled and not considered during the
+experiments. An example sample is shown in Figure A4.
+33
+
+PANGAEA
+
+Table A4: Results for PASTIS-R dataset with linear time strategy, best results in bold, second best underlined.
+mIoU ↑
+
+m-F1 ↑
+
+m-prec ↑
+
+50% 100% 10%
+
+50% 100% 10%
+
+50% 100% 10%
+
+m-rec ↑
+
+m-acc ↑
+
+50% 100% 10%
+
+50% 100%
+
+Model
+
+Modality 10%
+
+CROMA
+CROMA
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-MAE
+S12-Data2Vec
+
+joint
+optical
+sar
+joint
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+sar
+optical
+
+27.56 27.59 27.75 39.61 39.74 39.91 36.55 36.80 36.79 48.64 48.80 49.28 71.76 71.63 71.93
+31.93 31.41 32.06 44.80 44.01 44.92 41.64 40.26 41.97 53.73 53.83 52.95 74.22 74.09 74.58
+19.47 19.63 20.68 28.88 29.02 30.12 27.24 27.83 28.82 33.55 32.93 34.29 67.35 67.66 68.72
+23.72 24.17 24.49 34.99 35.45 35.88 31.83 33.31 33.28 43.22 43.08 43.64 69.31 69.78 70.29
+15.58 15.79 15.13 24.13 24.72 23.45 23.63 23.58 21.71 28.78 28.46 30.18 60.69 60.36 62.11
+26.33 26.92 27.40 38.23 39.05 39.56 35.76 36.54 36.69 45.02 46.01 47.22 70.63 70.75 71.60
+12.25 12.91 13.31 19.08 20.20 20.83 18.73 20.33 21.34 21.84 21.75 23.17 58.35 57.69 58.39
+16.76 16.78 17.51 26.11 26.00 26.98 23.09 23.54 23.99 34.82 37.40 37.12 61.58 61.86 62.98
+10.40 10.45 11.74 15.57 15.87 17.45 15.19 15.56 17.34 28.12 29.97 28.00 59.73 58.61 61.91
+24.74 25.74 27.52 36.59 37.83 40.05 34.29 35.69 38.22 43.69 44.54 46.59 70.96 71.47 72.84
+24.29 24.79 26.09 35.97 36.67 38.32 33.06 33.09 35.08 44.53 46.53 47.05 68.97 69.19 69.98
+30.84 30.82 32.45 43.93 43.84 45.86 40.82 40.44 42.34 53.97 52.95 54.95 72.43 72.56 73.60
+25.31 26.40 27.06 36.68 38.40 39.22 33.48 35.08 35.32 45.94 47.44 50.61 68.48 68.27 69.62
+17.29 17.54 18.81 25.86 26.04 28.08 24.51 24.75 26.41 29.58 30.20 18.81 65.23 66.12 66.40
+24.65 24.52 26.94 36.11 35.82 39.22 33.28 32.38 36.34 44.15 45.97 47.01 68.72 68.85 70.56
+
+UNet Baseline
+ViT Baseline
+
+optical
+optical
+
+29.52 30.24 31.60 41.19 41.87 43.52 39.70 40.40 39.37 52.27 51.53 51.57 74.57 75.11 72.12
+36.38 36.13 36.57 50.07 49.74 50.03 46.16 46.21 46.38 59.32 59.43 59.46 75.37 75.36 75.96
+
+Table A5: Results for PASTIS-R dataset with L-TAE time strategy, best results in bold, second best underlined.
+mIoU ↑
+
+m-F1 ↑
+
+m-prec ↑
+
+50% 100% 10%
+
+50% 100% 10%
+
+m-acc ↑
+
+50% 100% 10%
+
+50% 100%
+
+Model
+
+Modality 10%
+
+CROMA
+CROMA
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-MAE
+S12-Data2Vec
+
+joint
+optical
+sar
+joint
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+sar
+optical
+
+32.80 32.33 32.32 45.73 45.12 45.27 42.59 42.21 44.09 54.42 53.12 51.33 75.37 74.89 74.47
+37.24 37.76 38.51 50.94 51.52 52.53 46.76 48.49 48.76 62.19 61.78 62.66 77.17 77.47 77.76
+21.62 21.31 21.61 31.42 31.21 31.93 30.78 29.97 32.22 36.80 35.75 39.43 68.31 67.01 66.91
+27.68 28.60 30.02 39.32 40.43 42.37 36.16 37.52 39.45 49.52 50.16 50.54 73.13 73.69 74.09
+21.47 20.41 21.24 32.01 30.85 32.02 28.59 27.66 28.71 42.51 43.76 45.36 65.33 67.98 67.39
+33.56 33.13 33.93 46.96 46.01 46.95 43.55 43.23 43.95 55.05 54.19 56.46 74.58 75.51 75.75
+17.19 17.46 18.23 26.52 26.66 27.57 25.39 26.15 26.57 30.01 32.88 32.46 63.14 64.23 65.80
+16.76 16.78 17.51 26.11 26.00 26.98 23.09 23.54 23.99 34.82 37.40 37.12 61.58 61.86 62.98
+22.86 23.26 24.55 33.44 34.56 35.75 33.25 23.02 33.64 40.88 38.32 43.69 68.75 68.45 71.19
+34.53 34.61 35.44 48.16 48.25 49.19 45.59 45.96 46.60 54.33 54.46 56.67 75.95 75.64 76.11
+32.51 32.59 34.49 45.66 45.84 48.07 42.38 42.91 44.97 55.89 57.71 57.21 74.28 74.02 75.43
+36.62 35.71 36.18 50.68 49.48 49.89 47.47 45.48 46.17 60.87 60.33 60.88 75.76 75.28 76.05
+31.06 31.15 32.03 44.05 44.15 45.23 40.74 39.38 41.09 54.39 56.17 56.21 73.47 73.38 74.09
+13.00 14.33 14.20 19.58 21.67 21.71 20.34 22.13 21.45 24.20 31.92 34.13 60.34 59.07 58.48
+33.09 33.42 34.32 45.98 46.63 47.61 43.46 43.60 44.89 56.51 56.14 59.39 74.58 74.31 75.28
+
+UNet Baseline
+ViT Baseline
+
+optical
+optical
+
+29.52 30.24 31.60 41.19 41.87 43.52 39.70 40.40 39.37 52.27 51.53 51.57 74.57 75.11 72.12
+38.44 38.77 38.53 52.49 52.59 54.89 49.51 49.25 51.53 60.35 61.27 62.61 76.93 77.71 78.34
+
+(a) S1 image 1
+
+(b) S2 image 1
+
+(c) Label 1
+
+50% 100% 10%
+
+m-rec ↑
+
+(d) S1 image 2
+
+(e) S2 image 2
+
+(f) Label 2
+
+Figure A4: Example data of Sen1Floods11 (Location: Global. Domain: Flood.). The Sentinel1 images are visualized
+by taking the VV, VH, VV bands, and the Sentinel-2 images are visualized by taking the B4, B3, and B2 bands. In the
+semantic labels, red represents water, green indicates areas without water, and blue marks cloudy pixels that are ignored.
+
+34
+
+PANGAEA
+
+A.4.1
+
+Extensive Results
+
+In the following, we present the comprehensive experimental results for the Sen1Floods11 flood mapping task.
+From Table A6, we observe that, as a relatively simple task with only two classes, the fully supervised UNet outperforms
+all other models. The benefits of RemoteCLIP are less pronounced in this limited-class setting, and Scale-MAE
+demonstrates suboptimal performance with the 10-meter resolution data.
+Table A6 illustrates the impact of label reduction. Even when labels are reduced by 50% and 10%, the fully supervised
+UNet continues to deliver superior performance. Additionally, both CROMA and Prithvi consistently achieve results
+comparable to those of the fully supervised setting. Given the simplicity of this task, the benefit of using pre-trained
+models is not as evident when compared to a lightweight fully supervised approach.
+Table A6: Sen1Floods11 results using different limited training labels with best results in bold, second best underlined.
+
+mIoU ↑
+
+m-F1 ↑
+
+water IoU ↑
+
+water F1 ↑
+
+Model
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+87.22
+82.84
+62.57
+86.28
+62.22
+83.92
+64.74
+83.12
+79.58
+84.95
+84.81
+81.91
+
+90.57
+88.39
+71.61
+89.69
+71.66
+89.45
+72.54
+87.52
+89.22
+88.93
+88.43
+86.58
+
+90.89
+89.37
+72.60
+90.37
+74.26
+90.30
+74.13
+89.07
+89.26
+88.61
+87.79
+88.15
+
+92.90
+90.13
+73.11
+92.32
+72.77
+90.82
+75.51
+90.31
+87.92
+91.48
+91.39
+89.48
+
+94.91
+93.62
+81.70
+94.40
+81.76
+94.25
+82.43
+93.09
+94.12
+93.94
+93.64
+92.51
+
+95.09
+94.20
+82.51
+94.80
+83.83
+87.51
+83.75
+94.03
+94.14
+93.75
+93.25
+93.47
+
+77.71
+70.70
+34.21
+76.21
+33.67
+72.30
+38.81
+71.11
+65.24
+73.96
+73.78
+68.80
+
+83.59
+79.84
+50.68
+82.11
+50.85
+81.65
+52.09
+78.29
+81.29
+80.76
+79.93
+76.71
+
+84.15
+81.54
+52.36
+83.26
+55.18
+83.12
+55.04
+81.02
+81.37
+80.25
+78.79
+79.44
+
+87.46
+82.83
+50.98
+86.50
+50.38
+83.92
+55.92
+83.12
+78.96
+85.03
+84.91
+81.52
+
+91.06
+88.79
+67.26
+90.18
+67.42
+89.90
+68.50
+87.82
+89.68
+89.35
+88.85
+86.82
+
+91.39
+89.83
+68.73
+90.86
+71.11
+90.79
+71.00
+89.52
+89.73
+89.04
+88.13
+88.54
+
+UNet Baseline 88.55 90.91 91.42 93.72 95.11 95.40 80.19 84.19 85.05 89.01 91.42 91.92
+ViT Baseline 81.85 86.08 87.66 89.40 92.19 93.71 68.28 75.81 78.56 81.15 86.24 87.99
+A.5
+
+xView2
+
+The xBD dataset [57] was used in the xView2 challenge and is thus often referred to as the xView2 dataset. It is a
+high-resolution, bi-temporal dataset focusing on detecting building damage, caused by various disasters, including
+floods, wildfires, earthquakes, hurricanes, and more. The images are sourced from Maxar satellites and offer RGB
+bands. Due to the difficulty of comparing damages caused by different events, the dataset authors use a four-level
+damage scale that is harmonized across disaster types. The damage is assessed per building, such that all pixels of a
+building have the same damage class. As a result, the dataset represents the task of change detection with one class
+representing ’no building’ and four classes representing various levels of building damage caused by the respective
+disaster. All images have a size of 1024 × 1024. The dataset is highly imbalanced, with the majority of pixels not
+containing buildings. Furthermore, the distribution of damage classes varies between disaster types, making this a rather
+challenging dataset. Figure A5 shows example data.
+A.5.1
+
+Extensive Results
+
+Details on experimental setup: To counteract the strong class imbalance, we follow a simple oversampling approach
+from the winning solution [166] of the xView2 competition: Images without buildings are seen once per training epoch,
+images with undamaged buildings are seen twice, and images with damaged buildings are seen thrice. Furthermore,
+when taking random crops in training, we consider multiple candidates and prefer those with more pixels of the
+underrepresented classes. As the decoder model, we use a UPerNet that concatenates the two embeddings computed for
+the pre- and post-disaster images by the encoder. For the UNet baseline, we use an input side length of 256 pixels. The
+ViT uses an input side length of 224 pixels. Due to optimization issues that occurred when using Dice loss in initial
+experiments, we deviate from the default training protocol when training models on xView2: Instead of evaluating the
+model on the validation set every five epochs, we validate after every single epoch. Furthermore, we increase the batch
+size from the default 8 to 32, to decrease the likelihood of batches that contain no or very few buildings, and thus lead
+the model into the undesired local minimum. We use the cross-entropy loss for all experiments on xView2. For Table
+35
+
+PANGAEA
+
+(a) Pre-disaster image
+
+(b) Post-disaster image
+
+(c) Damage label
+
+(a) Image
+
+(b) Land cover label
+
+Figure A6: Example data of Five Billion PixFigure A5: Example data of xView2 (Location: Global. Domain: els (Location: China. Domain: Urban Land
+HADR.). The image is taken from the 2013 Moore Tornado. Different Cover). The label colors indicate land cover
+colors in the label indicate different building damage classes.
+categories.
+
+12, we use the second-worst model Prithvi instead of the worst model SpectralGPT, due to the large computational
+requirements of training the whole SpectralGPT encoder.
+Table A7: Bi-temporal change detection results on xView2 using 100% of the training set, best results in bold, second
+best underlined.
+Per-class IoU ↑
+Model
+
+mIoU ↑ m-F1 ↑ m-acc ↑
+
+No build
+
+No dam
+
+Minor dam
+
+Major dam
+
+Destr.
+
+CROMA
+DOFA
+GFMSwin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+53.27
+59.64
+59.15
+49.35
+57.41
+52.23
+60.72
+48.40
+51.59
+50.56
+50.44
+51.36
+
+65.81
+71.73
+71.45
+61.92
+69.87
+64.66
+72.70
+60.89
+64.29
+63.38
+63.05
+64.14
+
+97.21
+97.88
+97.73
+96.92
+97.58
+97.14
+97.99
+96.72
+97.09
+96.95
+96.99
+97.03
+
+97.77
+98.33
+98.19
+97.36
+98.01
+97.76
+98.45
+97.36
+97.57
+97.39
+97.44
+97.49
+
+60.64
+70.22
+68.11
+56.66
+65.75
+59.96
+71.43
+54.20
+58.71
+57.03
+57.95
+57.97
+
+19.97
+25.27
+25.92
+16.54
+24.05
+19.25
+26.18
+17.06
+18.97
+19.36
+17.44
+19.29
+
+36.13
+45.45
+45.45
+35.13
+43.76
+32.43
+47.76
+28.64
+37.56
+36.26
+36.15
+38.32
+
+51.85
+58.91
+58.06
+41.05
+55.50
+51.78
+59.78
+44.74
+45.14
+42.77
+43.24
+43.73
+
+UNet Baseline
+ViT Baseline
+
+58.68
+57.43
+
+70.80
+70.00
+
+97.82
+97.53
+
+98.34
+97.91
+
+68.97
+65.26
+
+23.62
+24.36
+
+44.49
+46.74
+
+57.96
+52.87
+
+The full results in Table A7 for 100% of the data show that especially the minor and major damage classes are very
+hard to classify, which is also why we are oversampling them during training. No model achieves ≥30% IoU on minor
+damage, which is likely due to the dataset imbalance and the difficulty of distinguishing this class from no damage or
+major damage. Scale-MAE performs consistently strongly, similar to DOFA, GFM-Swin, and RemoteCLIP. All of them
+are pre-trained on high-resolution data, which makes them well-equipped to extract features from the high-resolution
+xView2 images. On the other hand, SpectralGPT, the S12 models and Prithvi perform less well, likely due to them
+being pre-trained on lower-resolution data. This reinforces the intuition that there should be a match between the GFM
+and the target dataset to achieve a good performance.
+Compared to the UPerNets that are trained on top of the frozen GFM encoders, the two fully trained baselines perform
+surprisingly well. The UNet performs roughly as well as the GFMs trained on high-resolution images, which is
+surprising, given that it has fewer parameters than a UperNet decoder alone. The ViT model performs similarly well,
+while using ten times as many parameters as the UNet.
+A.6
+
+Five Billion Pixels
+
+The Five Billion Pixels dataset is a large-scale, high-resolution land cover classification dataset based on Gaofen-2
+satellite imagery, originally covering over 50,000 square kilometers of China. It contains more than 5 billion labeled
+36
+
+PANGAEA
+
+pixels with a 4-meter spatial resolution, providing detailed annotations across 24 categories, including artificial,
+agricultural, and natural land covers. An image and label paired example is shown in Fig. A6.
+To include it in PANGAEA, we made key modifications to enhance its usability. We cropped the images into 520 × 520
+patches, making them more manageable for model input. We then split it into train, validation, and test, making stratified
+sampling of 70%, 10%, and 20%. Before performing this split, we created an out-of-domain test set (which wasn’t
+available in the original release), carefully selecting 22 patches from the northern regions of China to avoid spatial
+autocorrelation.
+A.6.1
+
+Extensive Results
+
+The results from Table A8 reveal interesting key insights regarding GFM performance, especially in light of pre-training
+data characteristics. Models pre-trained on high-resolution images, such as RemoteCLIP, GFM-Swin, and Scale-MAE,
+consistently achieve the highest scores across most metrics. This superiority reflects the importance of high-resolution
+imagery in tasks involving a large number of classes, where greater image detail likely aids in capturing clear boundaries
+and distinguishing textures essential for accurate segmentation.
+The effectiveness of RemoteCLIP -with the best mIOU (66.22%), m-f1 (76.41%), m-precision (74.55%), and maccuracy (94.37%)- also underscores the value of integrating textual information, as it appears particularly beneficial
+for tasks requiring nuanced class differentiation (see MADOS as well). Models like RemoteCLIP that leverage textual
+embeddings perform exceptionally well, suggesting that text-based features provide enhanced semantic context. This
+capability likely helps the model to generalize more effectively across the large number of classes, where textual
+information augments visual input and reinforces finer distinctions that may not be easily identifiable in pixel-based
+imagery alone. This is true especially, when the distinctions among classes cannot be based on spectral information.
+In contrast, GFMs pre-trained primarily on lower-resolution data perform poorly, as evidenced by models like SpectralGPT and Prithvi, which score significantly lower in nearly all metrics. SpectralGPT, with an mIOU of 32.08% and m-f1
+of 40.47%, demonstrates the limitations of a low-resolution multi-spectral pre-training approach when the dataset has
+restricted spectral diversity, such as the FBPs dataset with only four bands.
+UNet still demonstrates respectable results with an mIOU of 58.25% and an accuracy of 93.38%. This suggests that,
+although specialized models with high-resolution or textual pre-training perform best, the baseline UNet architecture
+can reasonably capture fundamental spatial structures. However, its performance does not match models benefitting
+from additional pre-training on high-resolution imagery and textual data, which provide a distinct advantage for complex
+classification tasks. Overall, these results reinforce that models trained on high-resolution imagery and enhanced by
+textual information are particularly suited to tasks involving numerous classes and poor spectral information, whereas
+low-resolution pre-training limits segmentation effectiveness due to insufficient detail and limited spectral diversity.
+Table A8: Results for FiveBillionPixels dataset, best results in bold, second best underlined.
+Model
+
+mIoU ↑
+
+m-F1 ↑
+
+m-prec ↑
+
+m-rec ↑
+
+m-acc ↑
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-Data2Vec
+S12-DINO
+S12-MAE
+S12-MoCo
+
+51.85
+43.80
+67.19
+46.82
+69.19
+50.97
+67.19
+33.42
+48.82
+51.15
+51.50
+53.42
+
+63.50
+54.14
+77.67
+58.15
+79.18
+62.89
+78.12
+42.15
+59.53
+62.26
+62.69
+64.40
+
+59.96
+51.22
+76.28
+55.39
+77.64
+59.94
+75.10
+41.76
+56.85
+59.51
+59.79
+61.80
+
+77.34
+66.71
+80.30
+70.83
+82.57
+70.63
+82.28
+48.11
+69.26
+71.20
+69.98
+69.97
+
+90.14
+89.00
+98.12
+91.20
+98.31
+93.18
+98.05
+85.24
+92.73
+93.53
+93.43
+94.32
+
+UNet Baseline
+ViT Baseline
+
+60.68
+59.32
+
+70.92
+69.54
+
+70.14
+68.95
+
+72.80
+71.42
+
+97.27
+93.28
+
+A.7
+
+DynamicEarthNet
+
+DynamicEarthNet dataset is known for its daily observations compared to most datasets with irregular and long revisit
+intervals. The sequences are acquired from January 2018 to December 2019 with imagery from Planet Labs, covering
+37
+
+PANGAEA
+
+75 areas of interest distributed over the globe. Four bands (blue, green, red, and near-infrared) are provided with a
+ground sample distance of 3 meters and a resolution of 1024 × 1024. Pixel-wise semantic segmentation labels are
+available for the first day of every month, which annotate 6 land use and land cover classes including impervious
+surface, agriculture, forest, other vegetation, wetlands, soil, water (snow & ice are annotated but not used due to its
+extreme scarcity). To reduce the computational requirements for our benchmark, we only sample the images from
+the first 6 dates in every month as the input image sequences. Example images are shown in Figure A7. Note that,
+DynamicEarthNet is a challenging dataset with a large distribution shift from train set to validation set and test set.
+
+(a) 2018-01-01
+
+(b) 2018-01-02
+
+(c) 2018-01-03
+
+(d) 2018-01-04
+
+(e) 2018-01-05
+
+(f) 2018-01-06
+
+Figure A7: Example time series data of DynamicEarthNet. (Location: Global. Domain: Urban Land Cover.) The
+images sequences are visualized with B4, B3, B2 bands and sampled from the first 6 dates of every month to reduce
+computation requirement. This dataset challenges the models by extremely subtle daily changes.
+
+A.7.1
+
+Extensive Results
+
+Table A9: DynamicEarthNet results using 100% of the dataset, comparing linear and L-TAE temporal mapping
+strategies. Best results are in bold, second best are underlined.
+
+mIoU ↑
+L-TAE
+
+m-F1 ↑
+Linear
+
+L-TAE
+
+m-prec ↑
+Linear
+
+L-TAE
+
+m-rec ↑
+Linear
+
+L-TAE
+
+m-acc ↑
+
+Model
+
+Linear
+
+Linear
+
+L-TAE
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+38.25
+38.29
+40.84
+39.29
+35.78
+34.09
+28.42
+27.86
+34.07
+31.78
+36.31
+35.47
+35.11
+39.27
+37.85
+36.53
+35.44
+33.80
+34.81
+35.23
+34.08
+36.41
+35.90
+
+47.14
+47.31
+51.21
+49.52
+46.59
+46.41
+39.33
+38.74
+45.70
+43.79
+45.45
+48.86
+48.47
+49.42
+47.76
+44.94
+44.02
+40.69
+43.89
+43.18
+41.06
+44.32
+44.79
+
+46.70
+47.08
+50.38
+48.06
+45.33
+43.44
+37.62
+37.95
+43.71
+42.24
+44.69
+46.59
+46.21
+49.71
+47.38
+44.63
+44.60
+42.79
+44.15
+43.32
+42.32
+44.54
+45.61
+
+49.84
+51.42
+53.49
+56.75
+49.77
+54.88
+47.36
+42.81
+50.88
+52.18
+47.39
+53.65
+60.62
+50.31
+51.03
+48.12
+45.88
+43.53
+47.19
+45.89
+46.90
+48.51
+45.21
+
+69.54
+69.72
+70.03
+69.82
+66.51
+66.19
+63.18
+61.49
+66.27
+64.27
+67.22
+66.44
+66.30
+69.24
+69.39
+68.43
+67.84
+68.90
+66.00
+67.98
+67.42
+69.28
+66.85
+
+UNet Baseline
+ViT Baseline
+
+39.46
+36.83
+36.38
+
+48.81
+49.84
+49.33
+
+47.94
+48.07
+47.35
+
+52.58
+53.68
+54.25
+
+70.47
+66.75
+67.02
+
+Table A9 demonstrates the extensive results on the DynamicEarthNet Dataset using either linear or L-TAE temporal
+feature fusion. In general, fusing temporal features with a simple linear layer results in better performance than
+L-TAE on DynamicEarthNet. Given daily observations with extremely small changes, a simple linear fusion can be
+more straightforward to capture useful information. Another hypothesis is that linear fusion can better preserve the
+generalizable representations from GFMs while a heavier L-TAE time strategy may cost more severe overfitting since
+its additional parameters require more data to be trained properly.
+Tables A10 and A11 present the performance of foundation models given a limited portion of training data. When using
+the full dataset, the best-performing foundation models include CROMA, DOFA and SpectralGPT. These outstanding
+models are pre-trained on multi-modal data, which is likely the origin of the robustness against the large distribution shift
+from training to testing. However, Prithvi is an exception as it fails to cope with missing bands during testing time. UNet
+and ViT Baselines are also competitive on DynamicEarthNet. When using less data, the performance of fully-supervised
+UNet drops significantly while other models with pre-trained weights still mostly maintain the performance. We notice
+38
+
+PANGAEA
+
+Table A10: Results for DynamicEarthNet dataset with linear time strategy, best results in bold, second best underlined.
+mIoU ↑
+
+m-F1 ↑
+
+m-prec ↑
+
+m-rec ↑
+
+m-acc ↑
+
+Model
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+36.72
+39.81
+33.73
+29.63
+35.62
+34.64
+37.11
+35.91
+32.38
+34.03
+33.62
+34.71
+
+38.94
+40.16
+33.05
+29.88
+37.17
+36.34
+35.46
+36.73
+35.59
+34.03
+35.40
+35.36
+
+38.25
+40.84
+35.78
+28.42
+34.07
+36.31
+35.47
+38.28
+36.53
+33.80
+35.23
+36.41
+
+45.54
+50.82
+44.25
+39.06
+46.86
+44.20
+48.88
+44.43
+40.47
+41.64
+42.15
+41.77
+
+48.57
+50.33
+44.28
+39.81
+48.92
+45.11
+48.21
+46.22
+43.57
+41.40
+43.23
+42.85
+
+47.14
+51.21
+46.59
+39.33
+45.70
+45.45
+48.86
+48.14
+44.94
+40.69
+41.06
+44.79
+
+45.20
+49.63
+43.72
+38.18
+45.44
+44.29
+47.06
+45.41
+41.15
+43.00
+42.92
+42.89
+
+47.93
+49.24
+43.05
+38.43
+48.85
+44.68
+46.93
+46.44
+43.79
+42.26
+43.57
+43.64
+
+46.70
+50.38
+45.33
+37.62
+43.71
+44.69
+46.59
+47.07
+44.63
+42.79
+43.32
+44.54
+
+49.89
+53.20
+46.80
+44.73
+52.24
+46.29
+52.22
+49.86
+42.98
+41.50
+43.26
+47.52
+
+51.29
+55.92
+47.09
+46.60
+53.17
+47.30
+53.61
+47.37
+48.47
+48.66
+48.17
+49.81
+
+49.84
+53.49
+49.77
+47.36
+50.88
+47.39
+53.65
+51.01
+48.12
+43.53
+45.89
+48.51
+
+68.89
+69.15
+64.96
+63.78
+66.64
+67.22
+67.27
+69.75
+66.07
+67.53
+66.31
+68.35
+
+69.42
+70.38
+64.55
+64.45
+67.05
+67.65
+66.23
+68.14
+68.43
+67.35
+68.27
+68.95
+
+69.54
+70.03
+66.51
+63.18
+66.27
+67.22
+66.44
+68.65
+68.43
+68.90
+67.98
+69.28
+
+UNet Baseline 35.59 35.14 39.46 44.45 44.87 48.81 45.69 44.59 47.94 45.47 48.09 52.58 68.38 67.82 70.47
+ViT Baseline 39.89 39.26 36.83 52.77 51.79 49.84 50.40 49.81 48.07 56.85 56.67 53.68 68.55 69.19 66.75
+
+Table A11: Results for DynamicEarthNet dataset with L-TAE time strategy, best results in bold, second best underlined.
+mIoU ↑
+
+m-F1 ↑
+
+m-prec ↑
+
+m-rec ↑
+
+m-acc ↑
+
+Model
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+36.08
+39.15
+28.16
+32.28
+34.43
+34.64
+35.27
+35.33
+32.24
+32.78
+30.59
+33.63
+
+38.30
+39.20
+31.25
+33.42
+30.91
+36.34
+35.57
+36.52
+34.45
+32.76
+33.29
+32.61
+
+38.29
+39.29
+34.09
+27.86
+31.78
+36.31
+35.11
+37.85
+35.44
+34.81
+34.08
+35.90
+
+45.46
+48.75
+39.72
+42.80
+46.01
+44.20
+45.95
+45.17
+40.03
+41.99
+38.76
+41.73
+
+47.47
+50.53
+43.18
+43.35
+42.06
+45.11
+48.33
+45.51
+42.62
+40.99
+40.37
+40.05
+
+47.31
+49.52
+46.41
+38.74
+43.79
+45.45
+48.47
+47.76
+44.02
+43.89
+41.06
+44.79
+
+48.04
+50.21
+38.55
+41.19
+43.29
+44.29
+44.71
+46.06
+41.40
+44.04
+40.86
+43.56
+
+46.69
+49.32
+41.57
+43.35
+39.90
+44.68
+48.41
+46.12
+43.35
+42.62
+41.98
+41.42
+
+47.07
+48.06
+43.44
+37.95
+42.24
+44.69
+46.21
+47.38
+44.60
+44.15
+42.32
+45.61
+
+51.17
+53.52
+51.04
+46.95
+57.38
+46.29
+50.35
+45.07
+45.94
+40.67
+40.74
+42.06
+
+52.97
+55.11
+62.93
+45.22
+50.05
+47.30
+61.09
+46.07
+46.75
+45.52
+49.48
+46.97
+
+51.42
+56.75
+54.88
+42.81
+52.18
+47.39
+60.62
+51.03
+45.88
+47.19
+46.90
+45.21
+
+66.22
+69.64
+61.85
+64.15
+66.72
+67.22
+67.02
+65.41
+64.31
+65.46
+67.42
+67.74
+
+68.89
+70.10
+64.95
+66.04
+64.30
+67.65
+65.12
+66.84
+66.47
+65.82
+67.15
+65.06
+
+69.72
+69.82
+66.19
+61.49
+64.27
+67.22
+66.30
+69.39
+67.84
+66.00
+67.42
+66.85
+
+UNet Baseline 35.59 35.14 39.46 44.45 44.87 48.81 45.69 44.59 47.94 45.47 48.09 52.58 68.38 67.82 70.47
+ViT Baseline 35.39 37.33 36.38 47.87 49.81 49.33 45.25 47.46 47.35 56.31 55.29 54.25 66.36 67.58 67.02
+
+that using less training data might even lead to increasing performance, such as Prithvi, RemoteCLIP and ViT baseline.
+For these models, shorter training outweighs using more training data in DynamicEarthNet because of less overfitting.
+A.8
+
+Crop Type Mapping-South Sudan
+
+We include a crop-type semantic segmentation dataset in Africa, specifically South Sudan, to expand the benchmark
+dataset for underrepresented regions in agricultural areas. The Crop Type Mapping [155] dataset for South Sudan
+consists of Sentinel-1, Sentinel-2, and Planet satellite imagery in 2017, covering 837 fields and 4 types of crops. The
+temporal resolution of each scene is variable, with frames that are not temporally aligned. The area of interest is
+subdivided into 64 × 64 pixel grids. For our experiments, we use data from Sentinel-1 and Sentinel-2, which provide 10
+spectral bands (B2-B8, B8A, B11, B12) and 2 polarimetric bands (VV, VH), respectively. An example sample is shown
+in Figure A8.
+A.8.1
+
+Extensive Results
+
+Table A12 presents the extensive results of the Crop Type Mapping-SS Dataset, with both linear and L-TAE mapping
+strategies used. Notably, the S12 models, pre-trained on the full spectral bands of Sentinel-2 data, demonstrate top
+performance. This highlights the importance of leveraging the rich spectral information captured by Sentinel-2, which
+is particularly crucial for discerning subtle differences between crop types. Alongside the S12 models, RemoteCLIP
+and DOFA also achieve strong performance. In general, the L-TAE strategy generally yields superior results than
+linear temporal mapping, except that SpectralGPT exhibits a significant performance drop with this strategy. Regarding
+39
+
+PANGAEA
+
+(a) S1 from 2017-12-21
+
+(b) S1 from 2017-12-27
+
+(c) S2 from 2017-12-21
+
+(d) S2 from 2017-12-26
+
+(e) Semantic label
+
+Figure A8: Example time series data of Crop Type Mapping-SS (Location: South Sudan. Domain: Agriculture). The
+Sentinel-1 images are visualized by taking VH band and the Sentinel-2 images are visualized by taking B4, B3, B2
+bands.The last two frames from 2017 are displayed for this example.
+
+Table A12: Crop Type Mapping-South Sudan results using 100% of the dataset, comparing linear and L-TAE temporal
+mapping strategies. Best results are in bold, second best are underlined.
+mIoU ↑
+
+m-F1 ↑
+
+m-prec ↑
+
+m-rec ↑
+
+m-acc ↑
+
+Model
+
+Modality
+
+Linear
+
+L-TAE
+
+Linear
+
+L-TAE
+
+Linear
+
+L-TAE
+
+Linear
+
+L-TAE
+
+Linear
+
+L-TAE
+
+CROMA
+CROMA
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-Data2Vec
+S12-DINO
+S12-MAE
+S12-MAE
+S12-MoCo
+
+joint
+optical
+sar
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+sar
+optical
+
+38.91
+47.02
+35.39
+49.81
+39.72
+39.92
+46.50
+46.97
+21.39
+53.50
+54.01
+46.56
+46.28
+28.51
+44.22
+
+43.86
+49.38
+50.44
+51.33
+46.98
+43.07
+52.05
+46.97
+25.42
+46.95
+54.03
+48.66
+45.8
+21.06
+48.58
+
+48.88
+57.34
+44.68
+57.53
+48.56
+51.04
+54.34
+53.74
+25.84
+61.29
+66.95
+59.02
+57.73
+37.68
+51.38
+
+55.90
+61.96
+57.95
+61.37
+50.33
+57.92
+61.97
+53.74
+33.92
+59.11
+67.55
+63.14
+58.38
+30.50
+58.63
+
+51.85
+56.65
+49.90
+57.24
+52.10
+56.81
+51.86
+53.88
+26.18
+60.56
+69.01
+61.48
+60.10
+36.01
+50.76
+
+58.03
+70.43
+59.81
+60.81
+51.16
+70.00
+63.81
+53.88
+34.00
+65.91
+69.44
+72.75
+63.35
+52.05
+60.47
+
+46.93
+50.58
+41.78
+60.38
+48.64
+47.31
+59.26
+53.62
+40.79
+64.84
+66.63
+59.73
+57.72
+40.83
+52.68
+
+58.54
+62.28
+57.93
+63.82
+55.60
+54.59
+63.13
+53.62
+36.23
+63.01
+71.02
+62.97
+58.77
+30.79
+60.1
+
+73.66
+72.19
+68.78
+74.65
+75.36
+70.98
+79.37
+71.72
+77.10
+81.76
+81.92
+79.93
+74.72
+76.87
+70.5
+
+80.31
+75.50
+75.80
+80.61
+82.50
+72.48
+80.68
+71.72
+73.43
+64.69
+83.57
+76.69
+79.03
+54.82
+74.99
+
+UNet Baseline
+ViT Baseline
+
+optical
+optical
+
+47.57
+50.24
+51.78
+
+54.85
+57.38
+60.43
+
+55.23
+57.47
+61.95
+
+68.51
+57.36
+59.52
+
+81.89
+74.58
+74.17
+
+Table A13: Results for Crop Type Mapping-South Sudan dataset with linear time strategy, best results in bold, second
+best underlined.
+mIoU ↑
+
+m-F1 ↑
+
+m-prec ↑
+
+m-rec ↑
+
+m-acc ↑
+
+Model
+
+Modality
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-Data2Vec
+S12-DINO
+S12-MAE
+S12-MoCo
+
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+
+27.67
+28.03
+26.13
+24.99
+14.96
+38.80
+21.89
+45.36
+34.51
+29.30
+32.58
+36.71
+
+43.00
+39.03
+19.73
+36.14
+23.53
+46.37
+21.79
+49.94
+35.05
+34.61
+43.21
+37.41
+
+47.02
+49.81
+42.11
+39.92
+46.50
+46.97
+21.39
+53.50
+54.01
+46.56
+46.28
+44.22
+
+39.63
+40.16
+34.43
+35.02
+23.21
+46.60
+29.83
+52.62
+46.66
+41.53
+45.18
+47.02
+
+56.98
+51.76
+22.05
+47.00
+32.36
+51.60
+27.01
+56.85
+48.20
+46.42
+56.17
+44.61
+
+57.34
+57.53
+45.71
+51.04
+54.34
+53.74
+25.84
+61.29
+66.95
+59.02
+57.73
+51.38
+
+57.85
+48.69
+34.69
+45.36
+31.36
+48.54
+33.71
+57.74
+57.41
+52.03
+55.80
+53.10
+
+66.39
+60.23
+24.45
+54.49
+47.13
+51.27
+27.08
+55.98
+57.93
+57.51
+60.79
+49.13
+
+59.98
+57.24
+49.73
+56.81
+51.86
+53.88
+26.18
+60.56
+69.01
+61.48
+60.10
+50.76
+
+37.79
+37.79
+34.43
+32.33
+25.05
+45.41
+28.02
+53.19
+42.98
+38.17
+41.31
+43.44
+
+53.76
+47.20
+20.08
+43.44
+29.99
+52.91
+28.45
+58.34
+45.29
+41.66
+55.55
+41.59
+
+55.18
+60.38
+42.30
+47.31
+59.26
+53.62
+40.79
+64.84
+66.63
+59.73
+57.72
+52.68
+
+58.02
+58.20
+61.13
+58.94
+42.25
+65.92
+66.12
+65.32
+62.37
+65.98
+61.20
+69.73
+
+76.51
+71.72
+78.90
+72.29
+64.73
+75.35
+75.14
+77.45
+66.52
+71.11
+78.82
+73.77
+
+74.71
+74.65
+82.59
+70.98
+79.37
+71.72
+77.10
+81.76
+81.92
+79.93
+74.72
+70.50
+
+UNet Baseline
+ViT Baseline
+
+optical
+optical
+
+13.88 36.30 47.57 21.10 43.44 54.85 32.42 47.14 55.23 23.06 42.10 68.51 42.51 79.24 81.89
+30.10 34.41 50.24 42.11 46.39 57.38 54.21 56.45 57.47 39.28 42.61 57.36 59.31 71.98 74.58
+
+40
+
+PANGAEA
+
+Table A14: Results for Crop Type Mapping-South Sudan dataset with L-TAE time strategy, best results in bold, second
+best underlined.
+mIoU ↑
+
+m-F1 ↑
+
+m-prec ↑
+
+m-rec ↑
+
+m-acc ↑
+
+Model
+
+Modality
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+10%
+
+50%
+
+100%
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-Data2Vec
+S12-DINO
+S12-MAE
+S12-MoCo
+
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+
+36.77
+29.91
+13.30
+27.71
+19.86
+38.80
+13.44
+27.37
+34.11
+38.44
+35.29
+36.54
+
+42.20
+30.93
+38.58
+42.51
+32.09
+46.37
+20.32
+39.92
+28.53
+31.13
+28.07
+41.32
+
+49.38
+51.33
+46.98
+43.07
+52.05
+46.97
+25.42
+46.95
+54.03
+48.66
+45.80
+48.58
+
+49.76
+43.31
+18.97
+37.89
+30.90
+46.60
+21.91
+39.67
+45.70
+48.74
+48.86
+49.33
+
+56.72
+42.65
+44.74
+54.18
+44.35
+51.60
+27.17
+43.98
+38.19
+42.34
+38.32
+53.95
+
+61.96
+61.37
+50.33
+57.92
+61.97
+53.74
+33.92
+59.11
+67.55
+63.14
+58.38
+58.63
+
+60.99
+59.89
+25.03
+51.44
+43.76
+48.54
+32.64
+55.66
+58.73
+56.70
+62.76
+58.60
+
+67.83
+57.50
+49.63
+60.21
+48.60
+51.27
+25.52
+59.21
+36.81
+48.11
+37.82
+56.37
+
+71.19
+60.81
+51.16
+70.00
+63.81
+53.88
+34.00
+65.91
+69.44
+72.75
+63.35
+60.47
+
+44.81
+39.47
+41.19
+38.06
+32.18
+45.41
+28.74
+36.52
+44.19
+50.19
+48.23
+51.51
+
+53.13
+39.04
+42.98
+50.98
+45.70
+52.91
+30.13
+52.98
+41.62
+40.39
+43.09
+53.78
+
+59.97
+63.82
+55.60
+54.59
+63.13
+53.62
+36.23
+63.01
+71.02
+62.97
+58.77
+60.10
+
+70.30
+61.53
+44.47
+70.44
+46.74
+65.92
+35.30
+61.72
+75.49
+72.02
+73.54
+73.16
+
+70.07
+69.02
+81.12
+77.62
+70.81
+75.35
+63.69
+63.72
+73.78
+70.26
+71.27
+78.43
+
+68.30
+80.61
+82.50
+72.48
+80.68
+71.72
+73.43
+64.69
+83.57
+76.69
+79.03
+74.99
+
+UNet Baseline
+ViT Baseline
+
+optical
+optical
+
+13.88 36.30 47.57 21.10 43.44 54.85 32.42 47.14 55.23 23.06 42.10 68.51 42.51 79.24 81.89
+17.16 40.79 51.78 23.79 48.26 60.43 25.58 50.09 61.95 26.02 46.84 59.52 55.91 66.62 74.17
+
+the multi-modality experiments, incorporating SAR data does not improve performance and even leads to a decrease
+compared to using optical data alone. In addition, Scale-MAE, pre-trained on high-resolution imagery, shows the lowest
+performance on this dataset.
+Tables A13 and A14 showcase the data scarcity scenarios for linear and L-TAE strategies, respectively, utilizing only
+optical information. In these cases, the performance of the fully supervised baseline drops considerably compared
+to foundation models. Specifically, CROMA, SatlasNet, and the S12 models significantly outperform the baseline,
+demonstrating their robustness in limited data settings. This highlights the advantage of foundation models in leveraging
+learned representations to achieve strong performance even with reduced training data. For the linear mapping strategy,
+SpectralGPT consistently performs well across different label scarcity settings, further emphasizing the importance of
+spectral information for accurate crop type mapping.
+A.9
+
+SpaceNet 7
+
+The SpaceNet 7 dataset features satellite image time series acquired by the PlanetScope constellation between 2017
+and 2020 for 80 sites spread across the globe [167]. Each time series consists of 18 to 26 monthly image mosaics
+with a size of 1024 × 1024 pixels and a spatial resolution of approximately 4 m. In addition, the SpaceNet 7 dataset
+provides manually annotated building footprints for the 60 training sites and corresponding masks denoting areas that
+are obscured by clouds. Although the task of the original SpaceNet 7 challenge was to track these building footprints
+(i.e. vector data), the SpaceNet 7 dataset is commonly used to evaluate urban change detection methods. A data sample
+is shown in Fig. A9.
+The labeled SpaceNet 7 sites (n = 60) were first assigned to the training (n = 30), validation (n = 15), or test (n = 15)
+set, following the split in [168]. Then, sites were tiled into crops of size 256 × 256 pixels. During training, samples for
+a crop are generated by randomly selecting two timestamps from the image time series with a minimal temporal gap of
+five timestamps. The rasterized building labels (see [168]) for these timestamps were used to compute the change label.
+For model evaluation, the first and the last cloud-free images of a time series were selected.
+A.9.1
+
+Extensive Results
+
+Table A15 lists extensive change detection results on the SpaceNet 7 dataset. We compare two strategies, namely
+concatenation and differencing, to detect changes from the bi-temporal feature pairs extracted by the Siamese encoder
+(i.e. shared encoders). More specifically, the former strategy uses the concatenated feature pairs as input to the decoder,
+while the latter strategy uses the subtraction of the feature pairs. Scale-MAE achieved the highest values across all
+metrics and both change detection strategies, followed by the UNet baseline (trained from scratch) for the concatenation
+strategy and DOFA for the differencing strategy. Although falling short of the top two performances, SatlasNet and
+GFM also outperformed the rest of their competitors, achieving IoU values exceeding 20 for both strategies. The change
+detection strategy only had a minor effect on performance, except for UNet which achieved top-performance using
+concatenation and lowest performance among the models using differencing. In general, our change detection strategy
+results indicate that the preferable strategy is model-specific.
+41
+
+PANGAEA
+
+(a) Pre-change image
+
+(b) Post-change image
+
+(c) Building change label
+
+Figure A9: Example data of SpaceNet (Location: Global. Domain:
+Urban.). The pre-change and post-change images represent the first and
+last cloud-free satellite images in the time series. The label visualizes
+unchanged (black) and changed (white) pixels regarding built-up areas
+between the two images.
+
+(a) Sentinel2 image
+
+(b) Small farms label
+
+Figure A10:
+Example data of
+AI4SmallFarms (Location:
+Southeast
+Asia. Domain: Agriculture.). The example
+image is taken from Cambodia and visualized
+with B4, B3 and B2 bands.
+
+Table A15: Change detection results for the SpaceNet 7 dataset with 100 % of the data. The results in the last two
+columns are for the foreground (change) class. The best results are in bold and the second best underlined.
+mIoU ↑
+
+m-F1 ↑
+
+m-acc ↑
+
+IoU ↑
+
+F1 ↑
+
+Model
+
+Conc.
+
+Diff.
+
+Conc.
+
+Diff.
+
+Conc.
+
+Diff.
+
+Conc.
+
+Diff.
+
+Conc.
+
+Diff.
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+59.28
+61.84
+60.89
+56.54
+57.76
+61.88
+62.96
+58.86
+57.64
+56.47
+57.13
+58.23
+
+59.85
+61.47
+60.53
+58.67
+58.40
+60.63
+62.62
+59.43
+58.28
+57.00
+57.50
+57.89
+
+66.04
+69.37
+68.17
+62.09
+63.76
+69.44
+70.79
+65.41
+63.71
+61.95
+62.96
+64.50
+
+66.77
+68.93
+67.69
+65.12
+64.74
+67.83
+70.39
+66.20
+64.63
+62.77
+63.50
+64.04
+
+99.14
+99.45
+99.32
+99.00
+99.33
+99.38
+99.45
+99.25
+99.08
+99.05
+99.06
+99.23
+
+99.28
+99.35
+99.32
+99.26
+99.25
+99.31
+99.39
+99.26
+99.12
+99.04
+99.09
+99.15
+
+19.41
+24.24
+22.46
+14.09
+16.18
+24.38
+26.47
+18.48
+16.20
+13.89
+15.20
+17.22
+
+20.41
+23.60
+21.75
+18.08
+17.55
+21.96
+25.85
+19.60
+17.44
+14.96
+15.91
+16.62
+
+32.52
+39.02
+36.68
+24.69
+27.86
+39.20
+41.86
+31.19
+27.89
+24.39
+26.39
+29.39
+
+33.91
+38.19
+35.72
+30.62
+29.87
+36.01
+41.09
+32.78
+29.70
+26.03
+27.45
+28.51
+
+UNet Baseline
+ViT Baseline
+
+62.09
+52.57
+
+51.01
+57.09
+
+69.70
+55.78
+
+54.36
+62.92
+
+99.41
+98.62
+
+96.48
+99.00
+
+24.76
+6.53
+
+5.55
+15.17
+
+39.70
+12.25
+
+10.51
+26.35
+
+Table A16 compares the change detection results on the SpaceNet 7 dataset obtained using the concatenation strategy
+and 100 % of the labeled training data to limited label scenarios, using only 50 % and 10 % of the labeled training
+data. In the 50 % scenario, several foundation models (DOFA, Prithvi, and RemoteCLIP), as well as the UNet baseline,
+experienced large performance drops (> 5 mIoU) compared to the 100 % scenario. In comparison, other foundation
+models successfully retained most of their performance. For example, the performance of GFM, SatlasNet, and
+Scale-MAE dropped by less than 2 mIoU points. However, none of the models managed to retain their performance
+from the 100 % scenario when reducing the labeled training data to 10 %.
+Overall, we attribute the strong performance of Scale-MAE on the SpaceNet 7 change detection task to its robust
+multi-scale representations, especially since the satellite imagery in SpaceNet 7 (Planet) has a higher spatial resolution
+(approx. 4 m) than the Sentinel imagery typically used for pertaining foundation models. Furthermore, many other
+foundation models do not specifically address scale-specific information in satellite images [15]. It is also noteworthy
+that most foundation models, including Scale-MAE, were not specifically designed to solve change detection tasks.
+A.10
+
+AI4SmallFarms
+
+The AI4SmallFarms dataset consists of 439,001 manually annotated agricultural field polygons distributed across 62
+non-overlapping tiles, each approximately 5 × 5 km, in Vietnam and Cambodia. The dataset includes multi-temporal
+Sentinel-2 image composites, created by aggregating monthly cloud-free images using median pixel values. The
+Sentinel-2 bands B2, B3, B4 and B8 are included for each tile. Additionally, high-resolution Google Map (GM) images
+are incorporated to improve boundary accuracy; however, these are not included in training the models, as the goal is
+42
+
+PANGAEA
+
+Table A16: Change detection results for the SpaceNet 7 dataset with the concatenation strategy and limited training
+label scenarios. The best results are in bold and the second best underlined.
+mIoU ↑
+
+m-F1 ↑
+
+m-acc ↑
+
+Model
+
+10 %
+
+50 %
+
+100 %
+
+10 %
+
+50 %
+
+100 %
+
+10 %
+
+50 %
+
+100 %
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-Data2Vec
+
+42.15
+46.10
+39.48
+36.78
+43.11
+49.78
+49.68
+36.31
+49.46
+41.15
+40.51
+40.66
+
+59.31
+47.06
+59.83
+49.45
+50.83
+60.74
+61.24
+56.28
+56.21
+55.14
+55.55
+56.94
+
+59.28
+61.84
+60.89
+56.54
+57.76
+61.88
+62.96
+58.86
+57.64
+56.47
+57.13
+58.23
+
+46.74
+48.09
+44.58
+42.88
+46.97
+49.89
+52.10
+42.74
+50.16
+45.71
+45.30
+45.44
+
+66.07
+49.95
+66.77
+52.24
+53.66
+67.97
+68.61
+61.82
+61.63
+60.00
+60.63
+62.67
+
+66.04
+69.37
+68.17
+62.09
+63.76
+69.44
+70.79
+65.41
+63.71
+61.95
+62.96
+64.50
+
+82.90
+92.03
+78.31
+72.87
+85.29
+99.55
+96.19
+71.68
+98.33
+81.51
+80.27
+80.49
+
+99.20
+92.07
+99.24
+95.36
+97.04
+99.31
+99.36
+98.76
+98.92
+98.81
+98.85
+99.07
+
+99.14
+99.45
+99.32
+99.00
+99.33
+99.38
+99.45
+99.25
+99.08
+99.05
+99.06
+99.23
+
+UNet Baseline
+ViT Baseline
+
+46.08
+36.01
+
+46.82
+49.21
+
+62.09
+52.57
+
+49.49
+42.44
+
+50.06
+51.45
+
+69.70
+55.78
+
+90.02
+71.22
+
+91.24
+95.85
+
+99.41
+98.62
+
+to be able to perform farm boundary delineation from Sentinel-2 imagery. The digitization process involved detailed
+manual annotation from both Sentinel-2 and GM images, followed by a rigorous multi-step quality control procedure
+that included topological consistency checks and independent verification by multiple quality control teams. Fig. A10
+displays an example sample.
+A.10.1
+
+Extensive Results
+
+The results on the AI4SmallFarms dataset, presented in Table A17, show that the fully supervised UNet model
+significantly outperforms all evaluated GFMs. The UNet achieves an mIoU of 46.34% and a mean F1 score of 62.36%,
+while the GFMs exhibit mIoU values ranging from 21.47% to 27.19% and m-f1 scores between 35.07% and 42.73%.
+This performance gap suggests that being able to train the encoder is beneficial for capturing the fine-grained spatial
+Table A17: Results for the AI4SmallFarms dataset. Best results in bold, second best underlined.
+IoU ↑
+
+F1 ↑
+
+prec ↑
+
+rec ↑
+
+acc ↑
+
+Model
+
+mIoU
+
+fg-IoU
+
+m-F1
+
+fg-F1
+
+m-prec
+
+fg-prec
+
+m-rec
+
+fg-rec
+
+m-acc
+
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-Data2Vec
+S12-DINO
+S12-MAE
+S12-MoCo
+
+25.65
+27.07
+27.19
+26.86
+25.12
+25.13
+21.47
+26.75
+24.23
+25.62
+24.69
+25.38
+
+26.54
+26.18
+25.44
+25.79
+26.24
+25.29
+26.43
+25.22
+25.25
+25.04
+24.94
+25.47
+
+40.82
+42.60
+42.73
+42.34
+40.14
+40.17
+35.07
+42.19
+39.00
+40.79
+39.60
+40.48
+
+41.95
+41.50
+40.56
+41.01
+41.57
+40.37
+41.81
+40.27
+40.32
+40.05
+39.93
+40.59
+
+56.33
+56.11
+55.09
+55.50
+55.76
+54.35
+55.30
+54.66
+54.06
+54.12
+53.73
+54.67
+
+86.83
+82.69
+79.27
+81.38
+86.46
+82.27
+93.76
+79.11
+83.67
+80.35
+81.54
+82.62
+
+56.69
+55.82
+54.65
+55.19
+56.18
+54.39
+58.06
+54.30
+54.33
+53.98
+53.78
+54.70
+
+27.65
+27.70
+27.25
+27.41
+27.36
+26.74
+26.91
+27.01
+26.56
+26.67
+26.44
+26.91
+
+40.84
+42.62
+42.81
+42.37
+40.17
+40.17
+35.77
+42.25
+39.03
+40.80
+39.60
+40.48
+
+UNet Baseline
+ViT Baseline
+
+46.34
+38.37
+
+34.07
+12.71
+
+62.36
+50.31
+
+50.83
+22.56
+
+67.82
+50.46
+
+71.61
+20.23
+
+63.38
+50.54
+
+39.40
+25.49
+
+65.90
+65.81
+
+details required for accurate field boundary segmentation in medium-resolution optical imagery. In contrast, the GFMs
+may lack the necessary spatial resolution or fail to effectively generalize the specific characteristics of smallholder
+farms in Vietnam and Cambodia. These findings highlight the importance of task-specific model design and suggest
+43
+
+PANGAEA
+
+that, for certain specialized applications, fully supervised models may offer superior performance over more generalized
+pre-trained models.
+A.11
+
+BioMassters
+
+BioMassters is an Above Ground forest Biomass (AGB) estimation dataset at 10m spatial resolution, covering 8.5
+million hectares of Finland’s boreal forests. The dataset consists of 13,000 reference AGB tiles, each of size 256 × 256
+pixels, along with corresponding time series images from Sentinel-1 and Sentinel-2 satellites. The reference AGB data
+is derived from Airborne LiDAR campaigns conducted between 2017 and 2021 by the Finland Forest Centre and the
+National Land Survey (NLS) of Finland. The input data includes 12-month time series of Sentinel-1 and Sentinel-2.
+The Sentinel-1 input data contains both ascending and descending orbit signals, resulting in four bands in each image:
+ASC VV, ASC VH, DSC VV, and DSC VH. The Sentinel-2 images contain 10 bands, B2-B8, B8a, B11, and B12. The
+training and validation set is created using 80-20 split. The test set is created by randomly selecting 30 percent data
+points from 2018, 2020, and 2021, and 20 percent from 2019. Fig. A11 shows a data sample. However, it is important
+to consider that the dataset is localized only in Finland.
+
+(a) Sentinel1 image
+
+(b) Sentinel2 image
+
+(c) Aboveground biomass label
+
+Figure A11: Example data of Biomassters (Location: Finland. Domain: Forest.). The Sentinel1 images are visualized
+by taking the VV, VH, VV bands, and the Sentinel-2 images are visualized by taking the B4, B3, and B2 bands and
+taken from August.
+
+A.11.1
+
+Extensive Results
+
+The detailed results on BioMassters datasets are presented in Table A18. The evaluation is conducted under different
+temporal strategies, data modalities and limited label strategies.
+Table A18 contains evaluation results on all GFMs with pre-trained encoder on representation learning and decoder
+fine-tuned to estimate forest biomass as a regression task. The results show that the biomass estimation is more accurate
+with multi-temporal data than uni-temporal data. The estimation is further improved with the L-TAE multi-temporal
+feature learning strategy. This observation is consistent for all listed GFMs. In terms of modality, we see that the
+task is better learned through optical modality. In fact, in most of the cases, models solely trained with optical data
+achieved better results than combined SAR and optical data. We tested GFMs’ with limited labels to replicate real world
+application scenarios, where label scarcity is often an issue. The obtained results show that training with 100% labels
+provides better results than training with 50% which is better than training with 10% dataset, reflecting the general
+trend of getting better results with more training labels. However, the results also indicate that using 50% labels might
+be sufficient as training with 50% labels provides almost similar estimations as training with 100% labels. The best
+results are obtained from SpectralGPT and CROMA (optical) GFM whereas the worst results are from RemoteCLIP.
+We compared the GFM results with two basic supervised baselines; U-Net and ViT. Although not by a big margin but
+the supervised U-Net baselines outperformed all GFMs, raising questions on the generalizability of GFM for biomass
+estimation tasks.
+
+B
+
+Comparison with existing protocols
+
+Table A19 lists all the datasets used to evaluate the surveyed GFMs in their original publication. Every GFM uses its
+own protocol on a specific set of tasks, with few overlaps. Change detection and regression are barely evaluated.
+44
+
+PANGAEA
+
+Table A18: Biomassters results. The evaluation metric is Root Mean Square Error (RMSE ↓). Best results are
+highlighted in bold, and second best are underlined. SpectralGPT and CROMA are the top-performing models. Overall
+multi-temporal with L-TAE is the best configuration.
+Uni-temporal
+10%
+
+Multi-temporal
+50%
+
+100%
+
+Model
+
+Modality
+
+10%
+
+50%
+
+100%
+
+Linear
+
+L-TAE
+
+Linear
+
+L-TAE
+
+Linear
+
+L-TAE
+
+CROMA
+CROMA
+CROMA
+DOFA
+GFM-Swin
+Prithvi
+RemoteCLIP
+SatlasNet
+Scale-MAE
+SpectralGPT
+S12-MoCo
+S12-DINO
+S12-MAE
+S12-MAE
+S12-Data2Vec
+
+joint
+optical
+sar
+joint
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+optical
+sar
+optical
+
+45.88
+46.99
+51.43
+49.29
+52.98
+48.93
+55.14
+47.19
+69.53
+46.36
+47.89
+47.65
+48.21
+54.41
+46.38
+
+43.74
+44.88
+49.82
+46.57
+51.34
+46.76
+53.58
+45.80
+67.27
+44.01
+46.29
+45.98
+46.35
+52.44
+46.20
+
+43.07
+44.16
+49.19
+45.87
+50.46
+46.05
+52.81
+45.18
+66.55
+43.35
+45.69
+45.39
+45.74
+51.69
+45.48
+
+43.24
+44.11
+46.21
+46.89
+50.24
+47.58
+53.22
+45.90
+63.19
+42.01
+44.27
+43.91
+45.73
+50.43
+44.86
+
+41.19
+40.25
+44.07
+46.03
+49.30
+45.48
+53.32
+44.38
+54.16
+39.44
+44.83
+42.74
+43.76
+58.62
+42.02
+
+41.04
+40.80
+44.22
+44.27
+48.55
+44.04
+50.65
+42.87
+53.94
+39.56
+42.48
+42.13
+43.27
+47.88
+42.76
+
+38.50
+38.76
+41.86
+44.05
+48.19
+41.03
+50.09
+42.23
+46.74
+37.34
+41.08
+41.47
+41.66
+50.88
+42.82
+
+40.24
+39.99
+43.29
+43.25
+47.96
+42.90
+49.60
+42.13
+52.24
+38.55
+41.82
+41.54
+42.54
+46.87
+42.02
+
+37.86
+36.81
+41.45
+42.81
+46.83
+39.99
+49.79
+41.67
+47.15
+36.11
+40.21
+41.23
+41.07
+50.09
+41.91
+
+UNet Baseline
+ViT Baseline
+
+optical
+optical
+
+44.83
+49.13
+
+41.24
+46.22
+
+40.83
+43.77
+
+40.39
+46.19
+44.89
+
+C
+
+36.72
+39.96
+39.56
+
+35.67
+40.94
+38.55
+
+Additional results
+
+In this section of the Appendix, we present additional results that explore patterns between model performance and
+various characteristics of both pre-training and downstream datasets. Specifically, we investigate how performance
+varies across domains, geographic regions, and sensor resolutions, providing further insight into the factors that influence
+the generalization ability of geospatial foundation models.
+
+Figure A12: Performance variation across domains for different GFMs. The heatmap illustrates relative performance deltas (higher is better) compared to the domain-specific average. Warmer colors indicate higher-than-average
+performance, while cooler colors denote underperformance. This visualization highlights the modality-task and domainspecific disparities across models, including performance gaps such as GFM-Swin’s relative drop in Flood and Marine
+tasks, potentially due to distributional shifts in pretraining.
+
+45
+
+PANGAEA
+
+Table A19: Datasets used to evaluate GFMs in their original publications. Every model is evaluated through its protocol.
+Dataset
+
+Task CROMA DOFA
+
+GFM
+
+BigEarthNet
+EuroSAT
+So2Sat
+UC Merced
+Canadian Cropland
+GEO-Bench-class
+AiRound
+CV-BrCT
+MLRSNet
+OPTIMAL-31
+WHU-RS19
+RESISC45
+AID
+fMoW
+fMoW-Sentinel
+
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+Cla.
+
+✓
+✓
+
+✓
+
+DFC2020
+Seg.
+iSAID
+Seg.
+Vaihingen
+Seg.
+Potsdam
+Seg.
+LoveDA
+Seg.
+MARIDA
+Seg.
+DW-Expert
+Seg.
+GEO-Bench-seg
+Seg.
+WHU Aerial
+Seg.
+Sen1Floods11
+Seg.
+HLS Burn Scars
+Seg.
+Mass Roads
+Seg.
+Mass Buildings
+Seg.
+HLS Multi-Temp. Crop Seg.
+SpaceNet-1
+Seg.
+SegMunich
+Seg.
+
+✓
+
+Prithvi Remote
+CLIP
+
+Satlas
+
+Scale- Spectral
+MAE
+GPT
+
+✓
+✓
+
+✓
+
+✓
+✓
+
+S12-*
+✓
+✓
+✓
+
+✓
+
+✓
+✓
+
+✓
+✓
+✓
+
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+
+✓
+✓
+✓
+✓
+✓
+✓
+
+✓
+
+✓
+
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+✓
+
+RSICD
+RSITMD
+UCM
+
+Ret.
+Ret.
+Ret.
+
+✓
+✓
+✓
+
+DOTA
+DIOR
+HRRSD
+RSOD
+LEVIR
+HSRC
+Airbus Ships
+
+Det.
+Det.
+Det.
+Det.
+Det.
+Det.
+Det.
+
+✓
+✓
+✓
+✓
+✓
+✓
+
+OSCD
+DSFIN
+
+CD
+CD
+
+✓
+✓
+
+SpaceNet-2
+
+SR
+
+✓
+
+Cloud Gap
+
+Imp.
+
+✓
+✓
+
+✓
+✓
+
+✓
+
+46
+
+PANGAEA
+
+Figure A13: Geographic variation in model performance across foundation models. This heatmap displays average
+performance scores across five geographic regions. Each cell reflects the model’s absolute performance within a specific
+region, highlighting spatial generalization capabilities. These patterns underscore the importance of geographic context
+in evaluating GFMs.
+
+Figure A14: Performance variation of GFMs across different sensors and resolutions. This heatmap illustrates how
+model performance shifts depending on the source of input imagery, categorized by sensor types and their associated
+resolutions. The differences highlight the sensitivity of GFMs to input resolution and sensor characteristics.
+
+47
+
+
