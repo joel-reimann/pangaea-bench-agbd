@@ -3,9 +3,6 @@ import os as os
 import pathlib
 import pprint
 import time
-import csv
-import sys
-
 
 import hydra
 import torch
@@ -69,22 +66,19 @@ def main(cfg: DictConfig) -> None:
     Args:
         cfg (DictConfig): main_config
     """
-    # function imported from '/utils/utils.py': fix all random seeds, settings to preserve reproducibility
+    # fix all random seeds for reproducibility
     fix_seed(cfg.seed)
 
-    # distributed training variables
+    # distributed training setup
     rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
     device = torch.device("cuda", local_rank)
 
-    # set device to cuda, use the NCCL backend for distributed GPU training (source: https://docs.pytorch.org/docs/stable/distributed.html)
     torch.cuda.set_device(device)
     torch.distributed.init_process_group(backend="nccl")
 
-    # true if training else false
     train_run = cfg.train
     if train_run:
-        # set up experiment directory, train.log and save configurations
         exp_info = get_exp_info(HydraConfig.get())
         exp_name = exp_info["exp_name"]
         task_name = exp_info["task"]
@@ -93,17 +87,6 @@ def main(cfg: DictConfig) -> None:
         logger_path = exp_dir / "train.log"
         config_log_dir = exp_dir / "configs"
         config_log_dir.mkdir(exist_ok=True)
-        
-        #create dir and empty csv file to retrieve information during testing
-        test_metrics_dir = exp_dir / "test_metrics"
-        test_metrics_dir.mkdir(exist_ok=True)
-        path_to_csv = os.path.join(exp_dir, f"test_metrics/metrics.csv")
-        with open(path_to_csv, 'w') as f:
-            writer = csv.writer(f)
-            field = ["batch_id","image_id","target", "prediction", "MSE_per_batch"]
-            writer.writerow(field)
-            f.close()
-            
         
         # init wandb
         if cfg.task.trainer.use_wandb and rank == 0:
@@ -144,21 +127,22 @@ def main(cfg: DictConfig) -> None:
     logger.info("The experiment is stored in %s\n" % exp_dir)
     logger.info(f"Device used: {device}")
 
-    # instatiate encoder with the configurations passed in the encoder.yaml file; check for missing parameters between model and loaded weights
+    # instantiate encoder
     encoder: Encoder = instantiate(cfg.encoder)
     encoder.load_encoder_weights(logger)
     logger.info("Built {}.".format(encoder.model_name))
 
-    # prepare the decoder dependent from task (segmentation/regression) and allow for distributed data parallelism (See https://docs.pytorch.org/docs/stable/generated/torch.nn.parallel.DistributedDataParallel.html)
+    # prepare decoder for distributed training
     decoder: Decoder = instantiate(
         cfg.decoder,
         encoder=encoder,
     )
+    # AGBD FIX: Ensure encoder is properly set if not injected by hydra
     if getattr(decoder, "encoder", None) is None:
-        decoder.encoder = encoder  # Force set if not injected
+        decoder.encoder = encoder
     decoder.to(device)
 
-    # Option to print model, configurable in command line
+    # AGBD: Optional model printing for debugging
     if cfg.show_model:
         logger.info(f"====== Encoder architecture: ======")
         logger.info(encoder)
@@ -172,14 +156,13 @@ def main(cfg: DictConfig) -> None:
         find_unused_parameters=cfg.finetune,
     )
     
-    # log information regarding built encoder and decoder
     logger.info(
         "Built {} for with {} encoder.".format(
             decoder.module.model_name, type(encoder).__name__
         )
     )
 
-    # define modalities supported by the encoder and collate them in a separate function (needed for DataLoader)
+    # setup data collation for multiple modalities
     modalities = list(encoder.input_bands.keys())
     collate_fn = get_collate_fn(modalities)
 

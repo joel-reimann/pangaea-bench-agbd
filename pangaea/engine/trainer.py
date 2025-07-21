@@ -87,11 +87,11 @@ class Trainer:
         self.enable_mixed_precision = precision != "fp32"
         self.precision = torch.float16 if (precision == "fp16") else torch.bfloat16
 
-        # define GradScaler to scale gradients, avoid gradients "underflow"
-        # self.scaler = torch.GradScaler("cuda", enabled=self.enable_mixed_precision)
-        self.scaler = torch.cuda.amp.GradScaler("cuda", enabled=self.enable_mixed_precision)
+        # AGBD FIX: Use modern GradScaler API to avoid FutureWarning
+        self.scaler = torch.amp.GradScaler('cuda', enabled=self.enable_mixed_precision)
 
         self.start_epoch = 0
+        self.global_step = 0  # Add global step counter for WandB
 
         if self.use_wandb:
             import wandb
@@ -104,33 +104,24 @@ class Trainer:
         for epoch in range(self.start_epoch, self.n_epochs):
             # train the network for one epoch
             if epoch % self.eval_interval == 0:
-                metrics, used_time = self.evaluator(self.model, f"epoch {epoch}")
+                metrics, used_time = self.evaluator(self.model, f"epoch {epoch}", step=None)
                 self.training_stats["eval_time"].update(used_time)
-
-                # save BEST model checkpoint after self.eval_interval, default 5, within an epoch
                 self.save_best_checkpoint(metrics, epoch)
 
             self.logger.info("============ Starting epoch %i ... ============" % epoch)
-            
-            # set sampler so that shuffling works, see https://docs.pytorch.org/docs/stable/data.html
             self.t = time.time()
             self.train_loader.sampler.set_epoch(epoch)
-
-            # train one epoch, separate function. see below
             self.train_one_epoch(epoch)
 
-            # save model checkpoint after self.ckpt_interval, default 20
             if epoch % self.ckpt_interval == 0 and epoch != self.start_epoch:
                 self.save_model(epoch)
 
-        # Only do final evaluation if not in debug mode or n_epochs > 1
+        # AGBD FIX: Skip final evaluation in debug mode with single epoch to save time
         debug_mode = getattr(self.train_loader.dataset, 'debug', False)
         if not (self.n_epochs == 1 and debug_mode):
-            metrics, used_time = self.evaluator(self.model, "final model")
+            metrics, used_time = self.evaluator(self.model, "final model", step=None)
             self.training_stats["eval_time"].update(used_time)
-            # save BEST model checkpoint after self.eval_interval, default 5, after finishing training
             self.save_best_checkpoint(metrics, self.n_epochs)
-            # save last model
             self.save_model(self.n_epochs, is_final=True)
 
     def train_one_epoch(self, epoch: int) -> None:
@@ -153,10 +144,12 @@ class Trainer:
         #   7) update statistics, log information into logger and WandB, decay lr
 
         for batch_idx, data in enumerate(self.train_loader):
+            # print(f"[TRAINER DEBUG] Processing training batch {batch_idx}")
             #)1
             image, target = data["image"], data["target"]
             image = {modality: value.to(self.device) for modality, value in image.items()}
             target = target.to(self.device)
+            # print(f"[TRAINER DEBUG] Target shape: {target.shape}, Image keys: {list(image.keys())}")
 
             self.training_stats["data_time"].update(time.time() - end_time)
             # 2) & 3)
@@ -187,6 +180,7 @@ class Trainer:
 
             # decay lr
             self.lr_scheduler.step()
+            self.global_step += 1  # Increment global step counter
             if self.use_wandb and self.rank == 0:
                 self.wandb.log(
                     {
@@ -198,7 +192,7 @@ class Trainer:
                             for k, v in self.training_metrics.items()
                         },
                     },
-                    step=epoch * len(self.train_loader) + batch_idx,
+                    step=self.global_step,  # Use monotonic global step
                 )
 
             self.training_stats["batch_time"].update(time.time() - end_time)
@@ -275,16 +269,57 @@ class Trainer:
         """Compute the loss.
 
         Args:
-            logits (torch.Tensor): logits from the model.
+            logits (torch.Tensor): logits from the decoder.
             target (torch.Tensor): target tensor.
-
-        Raises:
-            NotImplementedError: raise if the method is not implemented.
 
         Returns:
             torch.Tensor: loss value.
         """
-        raise NotImplementedError
+        # CRITICAL DEBUG: Log actual tensor shapes to understand the mismatch
+        # print(f"[LOSS DEBUG] Logits shape: {logits.shape}")
+        # print(f"[LOSS DEBUG] Target shape: {target.shape}")
+        
+        # CRITICAL FIX: Handle spatial size mismatch between decoder output and target
+        logits_height, logits_width = logits.shape[-2:]
+        target_height, target_width = target.shape[-2:]
+        
+        # print(f"[LOSS DEBUG] Logits spatial: {logits_height}x{logits_width}")
+        # print(f"[LOSS DEBUG] Target spatial: {target_height}x{target_width}")
+        
+        # If spatial sizes don't match, resize target to match logits
+        if (logits_height, logits_width) != (target_height, target_width):
+            # print(f"[LOSS DEBUG] ⚠️ SPATIAL SIZE MISMATCH! Resizing target from {target_height}x{target_width} to {logits_height}x{logits_width}")
+            
+            # Resize target to match logits spatial size
+            target_resized = F.interpolate(
+                target.unsqueeze(1).float(),  # Add channel dim for interpolation
+                size=(logits_height, logits_width),
+                mode='nearest'  # Use nearest for discrete values
+            ).squeeze(1)  # Remove channel dim
+            
+            # print(f"[LOSS DEBUG] Target resized shape: {target_resized.shape}")
+            target = target_resized
+        
+        # Calculate center pixel coordinates
+        center_h = logits_height // 2
+        center_w = logits_width // 2
+        
+        # print(f"[LOSS DEBUG] Center pixel: ({center_h}, {center_w})")
+        
+        # Extract center pixels
+        logits_center = logits.squeeze(dim=1)[:, center_h, center_w]
+        target_center = target[:, center_h, center_w]
+        
+        # print(f"[LOSS DEBUG] Logits center shape: {logits_center.shape}")
+        # print(f"[LOSS DEBUG] Target center shape: {target_center.shape}")
+        # print(f"[LOSS DEBUG] Logits center values: {logits_center}")
+        # print(f"[LOSS DEBUG] Target center values: {target_center}")
+        
+        # Compute loss on center pixels only
+        loss = self.criterion(logits_center, target_center)
+        # print(f"[LOSS DEBUG] Loss value: {loss.item()}")
+        
+        return loss
 
     def save_best_checkpoint(
         self, eval_metrics: dict[float, list[float]], epoch: int
@@ -577,36 +612,69 @@ class RegTrainer(Trainer):
         Returns:
             torch.Tensor: loss value.
         """
-        # CRITICAL FIX: Central pixel logic for AGBD consistency
-        # Must match the evaluator and dataset logic exactly
+        # CRITICAL DEBUG: Log actual tensor shapes to understand the mismatch
+        # print(f"[LOSS DEBUG] Logits shape: {logits.shape}")
+        # print(f"[LOSS DEBUG] Target shape: {target.shape}")
         
-        height, width = logits.shape[-2:]
+        # CRITICAL FIX: Handle spatial size mismatch between decoder output and target
+        logits_height, logits_width = logits.shape[-2:]
+        target_height, target_width = target.shape[-2:]
         
-        # For AGBD: Use the same center calculation as in dataset and evaluator
-        if hasattr(self.train_loader.dataset, 'center'):
-            # Use dataset's center if available (for AGBD compatibility)
-            dataset_center = self.train_loader.dataset.center
-            # Ensure center is within bounds after potential padding/cropping
-            center_h = min(dataset_center, height - 1)
-            center_w = min(dataset_center, width - 1)
-        else:
-            # Fallback to geometric center for other datasets
-            center_h = height // 2
-            center_w = width // 2
+        # print(f"[LOSS DEBUG] Logits spatial: {logits_height}x{logits_width}")
+        # print(f"[LOSS DEBUG] Target spatial: {target_height}x{target_width}")
         
-        # Additional safety check for AGBD patches
-        if height == 25 and width == 25:
-            # For 25x25 AGBD patches, center should be at (12, 12)
-            center_h = center_w = 12
-        elif height != width:
-            # For non-square patches, use geometric center
-            center_h = height // 2
-            center_w = width // 2
+        # If spatial sizes don't match, resize target to match logits
+        if (logits_height, logits_width) != (target_height, target_width):
+            # print(f"[LOSS DEBUG] ⚠️ SPATIAL SIZE MISMATCH! Resizing target from {target_height}x{target_width} to {logits_height}x{logits_width}")
+            
+            # Resize target to match logits spatial size
+            target_resized = F.interpolate(
+                target.unsqueeze(1).float(),  # Add channel dim for interpolation
+                size=(logits_height, logits_width),
+                mode='nearest'  # Use nearest for discrete values
+            ).squeeze(1)  # Remove channel dim
+            
+            # print(f"[LOSS DEBUG] Target resized shape: {target_resized.shape}")
+            target = target_resized
         
-        assert logits.squeeze(dim=1).shape == target.shape, f"Shape error in trainer.py: logits.shape (squeezed) = {logits.squeeze(dim=1).shape} != target.shape {target.shape}"
-
-        # Use central pixel for AGBD regression loss
-        return self.criterion(logits.squeeze(dim=1)[:, center_h, center_w], target[:, center_h, center_w])
+        # Calculate center pixel coordinates
+        center_h = logits_height // 2
+        center_w = logits_width // 2
+        
+        # print(f"[LOSS DEBUG] Center pixel: ({center_h}, {center_w})")
+        
+        # Extract center pixels
+        logits_center = logits.squeeze(dim=1)[:, center_h, center_w]
+        target_center = target[:, center_h, center_w]
+        
+        # print(f"[LOSS DEBUG] Logits center shape: {logits_center.shape}")
+        # print(f"[LOSS DEBUG] Target center shape: {target_center.shape}")
+        # print(f"[LOSS DEBUG] Logits center values: {logits_center}")
+        # print(f"[LOSS DEBUG] Target center values: {target_center}")
+        
+        # CRITICAL FIX: Filter out ignore_index values from loss computation
+        ignore_index = -1
+        valid_mask = target_center != ignore_index
+        
+        print(f"[REGTRAINER LOSS DEBUG] Logits shape: {logits.shape}, Center pixel: ({center_h}, {center_w})")
+        print(f"[LOSS DEBUG] Valid samples: {valid_mask.sum().item()}/{target_center.shape[0]}")
+        
+        if valid_mask.sum() == 0:
+            # print(f"[LOSS DEBUG] WARNING: No valid samples in batch!")
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+        
+        # Only compute loss on valid (non-ignore_index) samples
+        valid_logits = logits_center[valid_mask]
+        valid_targets = target_center[valid_mask]
+        
+        # print(f"[LOSS DEBUG] Valid logits: {valid_logits}")
+        # print(f"[LOSS DEBUG] Valid targets: {valid_targets}")
+        
+        # Compute loss on center pixels only (excluding ignore_index)
+        loss = self.criterion(valid_logits, valid_targets)
+        # print(f"[LOSS DEBUG] Loss value: {loss.item()}")
+        
+        return loss
 
     @torch.no_grad()
     def compute_logging_metrics(
@@ -646,6 +714,20 @@ class RegTrainer(Trainer):
 
         # NOTE: Training metrics are local per-GPU and automatically averaged by DDP
         # No multi-GPU reduction bug here (unlike evaluator which needed fixes)
-        mse = F.mse_loss(logits.squeeze(dim=1)[:, center_h, center_w], target[:, center_h, center_w])
-        self.training_metrics["MSE"].update(mse.item())
+        
+        # CRITICAL FIX: Filter out ignore_index values from metrics computation
+        logits_center = logits.squeeze(dim=1)[:, center_h, center_w]
+        target_center = target[:, center_h, center_w]
+        
+        ignore_index = -1
+        valid_mask = target_center != ignore_index
+        
+        if valid_mask.sum() > 0:
+            valid_logits = logits_center[valid_mask]
+            valid_targets = target_center[valid_mask]
+            mse = F.mse_loss(valid_logits, valid_targets)
+            self.training_metrics["MSE"].update(mse.item())
+        else:
+            # If no valid samples, don't update metrics
+            print("[METRICS DEBUG] No valid samples for training metrics")
 

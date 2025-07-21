@@ -5,8 +5,9 @@
 train:
   _target_: pangaea.engine.data_preprocessor.Preprocessor
   preprocessor_cfg:
-    # Use padding strategy instead of resizing - CRITICAL for maintaining pixel resolution
-    - _target_: pangaea.engine.data_preprocessor.RandomCropToEncoder
+    # CRITICAL FIX: Use FocusRandomCropToEncoder for training to maintain center pixel alignment
+    # RandomCropToEncoder was causing misalignment by cropping randomly instead of preserving GEDI center
+    - _target_: pangaea.engine.data_preprocessor.FocusRandomCropToEncoder
       pad_if_needed: true  # Enable padding when image smaller than required
     - _target_: pangaea.engine.data_preprocessor.BandFilter
     - _target_: pangaea.engine.data_preprocessor.NormalizeMinMax

@@ -1,53 +1,56 @@
-# added parameters needed according to dataset.py, source: https://github.com/ghjuliasialelli/AGBD/tree/d8e7287bbe787277d64f25806f3c991b9cec7076
+# AGBD Dataset Configuration
+# RATIONALE: Clean dataset config focusing only on AGBD-specific parameters
+# Source: https://github.com/ghjuliasialelli/AGBD/tree/d8e7287bbe787277d64f25806f3c991b9cec7076
 
 _target_: pangaea.datasets.agbd.AGBD
 dataset_name: AGBD
 
 # Define the paths and download information
-root_path: ./data/agbd                    #/cluster/work/igp_psr/gsialelli/Data/patches/ # ./data/agbd # main path
-hdf5_dir: ./data/agbd                     #/cluster/work/igp_psr/gsialelli/Data/patches/ # ./data/agbd # path to the h5 files
-mapping_path: ./data/agbd                 #/cluster/work/igp_psr/gsialelli/Data/patches/ # ./data/agbd # path to file mapping each mode to its tiles (biomes_splits_to_name.pkl)
-norm_path: ./data/agbd                    #/cluster/work/igp_psr/gsialelli/Data/patches/ # ./data/agbd # path to files with normalization values (statistics_subset_2019-2020-v{version}_new.pkl)
+root_path: ./data/agbd
+hdf5_dir: ./data/agbd
+mapping_path: ./data/agbd
+norm_path: ./data/agbd
 
-version: 4                                # current version of patches is 4
-download_url:                             # needs manuel download from https://libdrive.ethz.ch/index.php/s/VPio6i5UlXTgir0, following code from download.sh, see source above
-auto_download: False
+version: 4  # Current version of patches
+download_url: null  # Manual download required from ETH LibDrive
+auto_download: false
 
-# Define the parameters
-split: None                               # is overwritten when run.py
-chunk_size: 1                             # AGBD is patch-based, so chunk_size=1, same as in original script, see source above
-years: [2019, 2020]                       # for file extraction
+# Dataset parameters from original AGBD
+split: null  # Overwritten in run.py
+chunk_size: 1  # AGBD is patch-based
+years: [2019, 2020]
 
-img_size: 32  # CRITICAL FIX: Pad 25x25 to 32x32 for ViT token alignment (25 % 16 != 0 causes checkerboard artifacts)
-multi_temporal: False                     # AGBD is not multi_temporal
-multi_modal: True                         # AGBD has S2 bands, SAR bands and auxiliary bands, for SatMAE only used S2 bands and SAR bands
-debug: False                              # When true, only a part of the data is loaded, reduces computation time
-
+# CRITICAL FIX: Pad 25x25 to 32x32 for ViT token alignment 
+# (25 % 16 != 0 causes checkerboard artifacts)
+img_size: 32
+multi_temporal: false  # AGBD is not multi-temporal
+multi_modal: true      # S2 optical + SAR bands
+debug: false           # Set to true for quick testing
 
 # Regression task configuration
-ignore_index: -1                          # Parameter needed for PANGAEA, used when cropping, here default -1
-num_classes: 1                            # AGBD is regression dataset, so set num_classes to 1
-classes:
-  - regression                            # AGBD is regression dataset, so classes set to 'regression'
-distribution:                             # only one class => one distribution
-  - 1.0
+ignore_index: -1       # For loss masking of padded regions
+num_classes: 1         # Regression = 1 output
+classes: [regression]
+distribution: [1.0]
 
-# Band configuration - all available modalities 
-# Note: AGBD provides HH/HV, but some models expect VV/VH, so we map HH->VV, HV->VH
+# Band configuration - preserve original AGBD band order
+# AGBD provides HH/HV, mapped to VV/VH for model compatibility in data_preprocessor.py
 bands:
   optical: [B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12]
-  sar: [HH, HV]  # AGBD provides these 2 bands, we map to VV/VH for model compatibility if needed
-  #auxiliary: [DEM, CH_ch, CH_std, LC_1, LC_2, S2_SCL] 
+  sar: [HH, HV]
+  # auxiliary: [DEM, CH_ch, CH_std, LC_1, LC_2, S2_SCL]  # Commented out as not used by most models
 
-# Normalization statistics from diagnostic logs (look up in statistics files, see download.sh in source above)
+# Original AGBD normalization statistics (from diagnostic logs)
+# CRITICAL: These must match the original AGBD paper normalization
 data_mean:
   optical: [0.12478869, 0.13480005, 0.16031432, 0.1532097, 0.20312776, 0.32636437, 0.36605212, 0.3811653, 0.3910436, 0.3910644, 0.2917373, 0.21169408]
   sar: [-10.381429, -16.722847]
-  #auxiliary: [604.6373, 9.736144, 7.9882116, 85.912, 85.912, 4.0]
+  # auxiliary: [604.6373, 9.736144, 7.9882116, 85.912, 85.912, 4.0]
 
 data_std:
   optical: [0.024433358, 0.02822557, 0.032037303, 0.038628064, 0.04205057, 0.07139242, 0.08555025, 0.092815965, 0.0896364, 0.0836445, 0.07472579, 0.05880649]
   sar: [8.561741, 8.718428]
+  # auxiliary: [...]
   #auxiliary: [588.0209, 9.493601, 4.5494938, 39.0094, 39.0094, 1.0]
 
 data_min:

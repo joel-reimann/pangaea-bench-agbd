@@ -180,7 +180,7 @@ class AGBD(RawGeoFMDataset):
 
         # Aggressive debug mode: drastically reduce number of samples for fast debug runs
         if self.debug:
-            self.length = min(self.length, 16)  # Use only 16 samples for both train and val
+            self.length = min(self.length, 512)  # Use 512 samples to allow proper batch training (512/128 = 4 batches)
 
         # NOTE: Don't open all file handles at once - this can cause memory issues and conflicts
         # We'll open them on-demand in __getitem__ instead
@@ -363,22 +363,26 @@ class AGBD(RawGeoFMDataset):
         # print(f"[AGBD DEBUG] AGBD tensor value: {agbd.item()}")
 
         # ---------- FOR PANGAEA COMPATIBILITY ---------------------------------------
-        # PANGAEA RegEvaluator expects target shape to match image shape (H x W)
-        # It computes loss using center pixel: logits[:,pxl,pxl] vs target[:,pxl,pxl]
-        # Create 25x25 patch tensor with AGBD value - center pixel will be used for loss
-        target = torch.full((25, 25), float(agbd), dtype=torch.float32)
-        print(f"[AGBD DEBUG] Created target tensor shape: {target.shape}")
-        print(f"[AGBD DEBUG] Target tensor center value: {target[12, 12].item()}")
-        print(f"[AGBD DEBUG] AGBD biomass value: {agbd.item():.2f} Mg/ha")
+        # CRITICAL FIX: Create target with ignore_index for all non-center pixels
+        # Only the center pixel [12,12] should have the GEDI biomass value
+        # All other pixels should be ignore_index (-1) to exclude them from loss
+        target = torch.full((25, 25), float(self.ignore_index), dtype=torch.float32)
+        target[12, 12] = float(agbd)  # Only center pixel has the actual GEDI value
+        
+        # print(f"[AGBD DEBUG] Created target tensor shape: {target.shape}")
+        # print(f"[AGBD DEBUG] Target tensor center value: {target[12, 12].item()}")
+        # print(f"[AGBD DEBUG] AGBD biomass value: {agbd.item():.2f} Mg/ha")
+        # print(f"[AGBD DEBUG] Non-center pixels: ignore_index ({self.ignore_index})")
+        # print(f"[AGBD DEBUG] Unique target values: {torch.unique(target)}")
         
         # define image and target as PANGAEA expects it (images' shape =  C T H W)
         image = {}
         
         if "optical" in self.bands.keys() and s2_bands is not None:
             image['optical'] = torch.from_numpy(s2_bands).permute(2, 0, 1).unsqueeze(1).float()
-            print(f"[AGBD DEBUG] Optical tensor shape: {image['optical'].shape}")
-            print(f"[AGBD DEBUG] Expected: (C=12, T=1, H=25, W=25)")
-            print(f"[AGBD DEBUG] Optical tensor range: [{image['optical'].min().item():.6f}, {image['optical'].max().item():.6f}]")
+            # print(f"[AGBD DEBUG] Optical tensor shape: {image['optical'].shape}")
+            # print(f"[AGBD DEBUG] Expected: (C=12, T=1, H=25, W=25)")
+            # print(f"[AGBD DEBUG] Optical tensor range: [{image['optical'].min().item():.6f}, {image['optical'].max().item():.6f}]")
             # print(f"[AGBD DEBUG] Optical tensor shape: {image['optical'].shape}")
             # print(f"[AGBD DEBUG] Optical tensor range: [{image['optical'].min().item():.6f}, {image['optical'].max().item():.6f}]")
         

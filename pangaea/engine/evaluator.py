@@ -6,7 +6,9 @@ import math
 import numpy as np
 import sklearn.metrics
 import wandb
-from agbd_visualization import log_agbd_regression_visuals
+import csv
+import random
+import traceback
 
 import torch
 import torch.nn.functional as F
@@ -15,9 +17,8 @@ from torch.utils.data import DataLoader
 from pangaea.decoders.knnclassifier import KNNClassifier
 from tqdm import tqdm
 
-# added for visualization when regression
-import random
-import csv
+# AGBD-specific visualization import - required for regression plotting
+from agbd_visualization_new import log_agbd_regression_visuals
 
 
 
@@ -83,6 +84,7 @@ class Evaluator:
             model: torch.nn.Module,
             model_name: str,
             model_ckpt_path: str | Path | None = None,
+            step: int | None = None,
     ) -> None:
         raise NotImplementedError
 
@@ -143,6 +145,133 @@ class Evaluator:
         return merged_pred
 
 
+class LinearClassificationEvaluator(Evaluator):
+    """RESTORED: Linear classification evaluator that was mistakenly removed in AGBD version"""
+    def __init__(
+        self,
+        val_loader,
+        exp_dir: str | Path,
+        device: torch.device,
+        inference_mode: str = "whole",
+        sliding_inference_batch: int = None,
+        use_wandb: bool = False,
+        multi_label: bool = False,   # Flag to indicate multi-label evaluation
+        topk: int = 1,               # For multi-label: if > 1, use top-k selection
+    ) -> None:
+        super().__init__(val_loader, exp_dir, device, inference_mode, sliding_inference_batch, use_wandb)
+        self.multi_label = multi_label
+        self.topk = topk
+        
+    def evaluate(
+        self, 
+        model: torch.nn.Module, 
+        model_name: str, 
+        model_ckpt_path: str | Path | None = None,
+        step: int | None = None):
+        
+        t = time.time()
+        if model_ckpt_path is not None:
+            model_dict = torch.load(model_ckpt_path, map_location=self.device, weights_only=False)
+            model_name = os.path.basename(model_ckpt_path).split(".")[0]
+            if "model" in model_dict:
+                model.module.load_state_dict(model_dict["model"])
+            else:
+                model.module.load_state_dict(model_dict)
+            self.logger.info(f"Loaded {model_name} for evaluation")
+        
+        model.eval()
+        
+        all_preds = []
+        all_targets = []
+        total_correct = 0
+        total_samples = 0
+        
+        tag = f"Evaluating {model_name} on {self.split} set"
+        for batch_idx, data in enumerate(tqdm(self.val_loader, desc=tag)):
+            image, target = data["image"], data["target"]
+            image = {k: v.to(self.device) for k, v in image.items()}
+            target = target.to(self.device)
+            
+            with torch.no_grad():
+                logits = model(image)
+            
+            if self.multi_label:
+                # Multi-label evaluation:
+                preds_prob = torch.sigmoid(logits)
+                if self.topk > 1:
+                    topk_indices = preds_prob.topk(self.topk, dim=1).indices
+                    preds = torch.zeros_like(preds_prob, dtype=torch.int)
+                    preds.scatter_(1, topk_indices, 1)
+                else:
+                    preds = (preds_prob > 0.5).int()
+
+                all_preds.append(preds.cpu().numpy())
+                all_targets.append(target.cpu().numpy())
+            else:
+                preds = torch.argmax(logits, dim=1)  
+
+                total_correct += (preds == target).sum().item()
+                total_samples += target.numel()
+                all_preds.append(preds.cpu().numpy())
+                all_targets.append(target.cpu().numpy())
+        
+        all_preds = np.concatenate(all_preds, axis=0)
+        all_targets = np.concatenate(all_targets, axis=0)
+        
+        if self.multi_label:
+            accuracy = sklearn.metrics.accuracy_score(all_targets, all_preds)
+            precision, recall, f1, _ = sklearn.metrics.precision_recall_fscore_support(
+                all_targets, all_preds, average="micro", zero_division=0)
+        else:
+            accuracy = total_correct / total_samples if total_samples > 0 else 0
+            precision, recall, f1, _ = sklearn.metrics.precision_recall_fscore_support(
+                    all_targets, all_preds,labels=list(range(self.num_classes)), average="macro", zero_division=0)
+        
+        metrics = {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "F1": f1,
+        }
+        
+        self.log_metrics(metrics)
+        used_time = time.time() - t
+        return metrics, used_time
+    
+    def __call__(self, model, model_name, model_ckpt_path=None, step=None):
+        return self.evaluate(model, model_name, model_ckpt_path, step=step)
+    
+    def compute_metrics(self):
+        pass
+
+    def log_metrics(self, metrics: dict):
+        def format_metric(name, value):
+            header = f"[{self.split}] ------- {name} --------\n"
+            value_str = (
+                f"[{self.split}] -------------------\n"
+                + f"[{self.split}] Mean".ljust(self.max_name_len, " ")
+                + "\t{:>7}".format("%.3f" % value)
+            )
+            return header + value_str
+
+        acc_str = format_metric("Accuracy", metrics["accuracy"])
+        prec_str = format_metric("Precision", metrics["precision"])
+        recall_str = format_metric("Recall", metrics["recall"])
+        f1_str = format_metric("F1-score", metrics["F1"])
+        self.logger.info(acc_str)
+        self.logger.info(prec_str)
+        self.logger.info(recall_str)
+        self.logger.info(f1_str)
+
+        if self.use_wandb and self.rank == 0:
+            wandb.log({
+                f"{self.split}_accuracy": metrics["accuracy"],
+                f"{self.split}_precision": metrics["precision"],
+                f"{self.split}_recall": metrics["recall"],
+                f"{self.split}_f1": metrics["F1"],
+            })
+
+
 class SegEvaluator(Evaluator):
     """
     SegEvaluator is a class for evaluating segmentation models. It extends the Evaluator class and provides methods
@@ -178,7 +307,7 @@ class SegEvaluator(Evaluator):
         self.visualization_interval = visualization_interval
 
     @torch.no_grad()
-    def evaluate(self, model, model_name='model', model_ckpt_path=None):
+    def evaluate(self, model, model_name='model', model_ckpt_path=None, step=None):
         t = time.time()
 
         if model_ckpt_path is not None:
@@ -266,8 +395,8 @@ class SegEvaluator(Evaluator):
         return metrics, used_time
 
     @torch.no_grad()
-    def __call__(self, model, model_name, model_ckpt_path=None):
-        return self.evaluate(model, model_name, model_ckpt_path)
+    def __call__(self, model, model_name, model_ckpt_path=None, step=None):
+        return self.evaluate(model, model_name, model_ckpt_path, step=step)
 
     def compute_metrics(self, confusion_matrix):
         # Calculate IoU for each class
@@ -399,7 +528,7 @@ class RegEvaluator(Evaluator):
         self.visualization_interval = visualization_interval
 
     @torch.no_grad()
-    def evaluate(self, model, model_name='model', model_ckpt_path=None, testing_bool=False):
+    def evaluate(self, model, model_name='model', model_ckpt_path=None, testing_bool=False, step=None):
         t = time.time()
         self.testing_bool=testing_bool
 
@@ -458,12 +587,86 @@ class RegEvaluator(Evaluator):
             # print(f"[EVALUATOR DEBUG] Model output range: [{logits.min().item():.6f}, {logits.max().item():.6f}]")
             # print(f"[EVALUATOR DEBUG] Model output mean: {logits.mean().item():.6f}")
             
-            # ===================== CHANGED FROM ORIGINAL: IMPLEMENT SPARSE MSE, ADD METRICS AND VISUALIZATION - from here ... =====================
+            # CRITICAL FIX: Handle spatial size mismatch between decoder output and target
+            # Special handling for AGBD to prevent target interpolation that destroys single-pixel supervision
             
-            # Simple central pixel logic - just use geometric center
+            logits_height, logits_width = logits.shape[-2:]
+            target_height, target_width = target.shape[-2:]
+            
+            # Check if this is AGBD dataset
+            is_agbd = hasattr(self.val_loader.dataset, 'dataset_name') and self.val_loader.dataset.dataset_name == 'agbd'
+            
+            if logits_height != target_height or logits_width != target_width:
+                if is_agbd:
+                    # AGBD-specific handling: DO NOT interpolate targets
+                    # Instead, track where the GEDI pixel should be in the larger logits space
+                    print(f"[AGBD EVALUATOR] Size mismatch - Logits: {(logits_height, logits_width)}, Target: {(target_height, target_width)}")
+                    
+                    # Find the GEDI pixel in the original target
+                    valid_mask = target != self.ignore_index
+                    valid_pixels = torch.nonzero(valid_mask.view(-1, target_height, target_width), as_tuple=False)
+                    
+                    if len(valid_pixels) > 0:
+                        # Group by batch
+                        gedi_locations = {}
+                        for pixel in valid_pixels:
+                            batch_idx = pixel[0].item()
+                            if batch_idx not in gedi_locations:
+                                gedi_locations[batch_idx] = []
+                            gedi_locations[batch_idx].append((pixel[1].item(), pixel[2].item()))
+                        
+                        # Create new target tensor matching logits size
+                        new_target = torch.full_like(logits.squeeze(1), self.ignore_index, dtype=target.dtype)
+                        
+                        # Map GEDI pixels to corresponding locations in larger space
+                        scale_h = logits_height / target_height
+                        scale_w = logits_width / target_width
+                        
+                        for batch_idx in range(target.shape[0]):
+                            if batch_idx in gedi_locations:
+                                for gedi_h, gedi_w in gedi_locations[batch_idx]:
+                                    # Scale coordinates to larger space
+                                    new_gedi_h = int(gedi_h * scale_h)
+                                    new_gedi_w = int(gedi_w * scale_w)
+                                    
+                                    # Clamp to bounds
+                                    new_gedi_h = max(0, min(new_gedi_h, logits_height - 1))
+                                    new_gedi_w = max(0, min(new_gedi_w, logits_width - 1))
+                                    
+                                    # Set the biomass value at scaled location
+                                    original_value = target[batch_idx, gedi_h, gedi_w]
+                                    new_target[batch_idx, new_gedi_h, new_gedi_w] = original_value
+                                    
+                                    print(f"[AGBD EVALUATOR] Batch {batch_idx}: GEDI pixel ({gedi_h},{gedi_w}) → ({new_gedi_h},{new_gedi_w}), Value: {original_value:.2f}")
+                        
+                        target = new_target
+                    else:
+                        print(f"[AGBD EVALUATOR] WARNING: No valid GEDI pixels found in target")
+                        # Create empty target matching logits size
+                        target = torch.full_like(logits.squeeze(1), self.ignore_index, dtype=target.dtype)
+                        
+                else:
+                    # Standard interpolation for non-AGBD datasets
+                    target = F.interpolate(
+                        target.unsqueeze(1).float(),  # Add channel dim and convert to float
+                        size=(logits_height, logits_width),
+                        mode='nearest'
+                    ).squeeze(1)  # Remove channel dim
+            
+            # For AGBD: Calculate center pixel location based on current spatial size
             height, width = logits.shape[-2:]
-            center_h = height // 2
-            center_w = width // 2
+            
+            if height == 25 and width == 25:
+                # Original AGBD patch size
+                center_h = center_w = 12
+            elif height == 32 and width == 32:
+                # Padded AGBD patch size (25->32 with symmetric padding)
+                # Center moves from (12,12) to (15,15) due to 3.5px padding on each side
+                center_h = center_w = 15
+            else:
+                # Fallback to geometric center for other sizes
+                center_h = height // 2
+                center_w = width // 2
             
             # print(f"[EVALUATOR DEBUG] Using geometric center: ({center_h}, {center_w}) for {height}x{width} patch")
             
@@ -513,6 +716,8 @@ class RegEvaluator(Evaluator):
             # Define variable, so that metrics are only saved when testing, not when validating
             if self.testing_bool:
                 path_to_csv = os.path.join(self.exp_dir, f"test_metrics/metrics.csv")
+                # Create directory if it doesn't exist
+                os.makedirs(os.path.dirname(path_to_csv), exist_ok=True)
                 with open(path_to_csv, 'a') as file:
                     writer = csv.writer(file)
                     for i in range(central_targets.shape[0]):
@@ -536,9 +741,9 @@ class RegEvaluator(Evaluator):
                         target=target,  # Ground truth biomass maps
                         band_order=getattr(self.val_loader.dataset, 'band_order', None),
                         wandb_run=wandb,
-                        step=batch_idx,
+                        step=None,  # Don't use step for visualizations - let WandB auto-increment
                         prefix=self.split,
-                        max_samples=2,  # Limit to 2 samples per batch for performance
+                        max_samples=1,  # Reduce to 1 sample per batch to minimize logging
                         dataset=self.val_loader.dataset,
                         model_name=model_name  # Pass model name for visualization title
                     )
@@ -623,8 +828,8 @@ class RegEvaluator(Evaluator):
         return metrics, used_time
 
     @torch.no_grad()
-    def __call__(self, model, model_name='model', model_ckpt_path=None):
-        return self.evaluate(model, model_name, model_ckpt_path)
+    def __call__(self, model, model_name='model', model_ckpt_path=None, step=None):
+        return self.evaluate(model, model_name, model_ckpt_path, step)
 
     def log_metrics(self, metrics, other_metrics):
         header = "------- MSE and RMSE --------\n"

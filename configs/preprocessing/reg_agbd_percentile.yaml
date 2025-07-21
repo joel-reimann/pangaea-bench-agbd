@@ -1,0 +1,37 @@
+# AGBD Regression Preprocessing with Percentile Normalization
+# CRITICAL FIX: Use percentile normalization to match original AGBD implementation
+# Original AGBD uses norm_strat='pct' (1st/99th percentiles) vs Pangaea's min/max
+# This causes ~5-6x difference in input ranges, preventing proper model learning
+
+train:
+  _target_: pangaea.engine.data_preprocessor.Preprocessor
+  preprocessor_cfg:
+    - _target_: pangaea.engine.data_preprocessor.AGBDCenterCropToEncoder
+      pad_if_needed: true
+    - _target_: pangaea.engine.data_preprocessor.BandFilter
+    - _target_: pangaea.engine.data_preprocessor.AGBDPercentileNormalize
+      stats_path: /scratch/reimannj/pangaea_agbd_integration_final/data/agbd/statistics_subset_2019-2020-v4_new.pkl
+    - _target_: pangaea.engine.data_preprocessor.BandPadding
+      fill_value: 0.0
+
+val:
+  _target_: pangaea.engine.data_preprocessor.Preprocessor
+  preprocessor_cfg:
+    - _target_: pangaea.engine.data_preprocessor.AGBDCenterCropToEncoder
+      pad_if_needed: true
+    - _target_: pangaea.engine.data_preprocessor.BandFilter
+    - _target_: pangaea.engine.data_preprocessor.AGBDPercentileNormalize
+      stats_path: /scratch/reimannj/pangaea_agbd_integration_final/data/agbd/statistics_subset_2019-2020-v4_new.pkl
+    - _target_: pangaea.engine.data_preprocessor.BandPadding
+      fill_value: 0.0
+
+test:
+  _target_: pangaea.engine.data_preprocessor.Preprocessor
+  preprocessor_cfg:
+    - _target_: pangaea.engine.data_preprocessor.AGBDCenterCropToEncoder
+      pad_if_needed: true
+    - _target_: pangaea.engine.data_preprocessor.BandFilter
+    - _target_: pangaea.engine.data_preprocessor.AGBDPercentileNormalize
+      stats_path: /scratch/reimannj/pangaea_agbd_integration_final/data/agbd/statistics_subset_2019-2020-v4_new.pkl
+    - _target_: pangaea.engine.data_preprocessor.BandPadding
+      fill_value: 0.0

@@ -5,7 +5,7 @@ Advanced scientific visualization for AGBD (Above-Ground Biomass Dataset) regres
 deep insights from both AGBD paper (2406.04928v3) and PANGAEA paper (2412.04204v2).
 
 SCIENTIFIC FOUNDATION:
-- Based on AGBD paper methodology: "25×25 pixel squares centered on GEDI footprint"
+- Based on AGBD paper methodology: "25x25 pixel squares centered on GEDI footprint"
 - "each patch has one ground-truth pixel, its center" for biomass regression
 - Implements PANGAEA multi-modal visualization principles for geospatial foundation models
 - Addresses checkerboard artifacts mentioned in meeting notes through proper padding visualization
@@ -45,6 +45,108 @@ AGBD_BIOMASS_RANGE = (0, 500)  # Mg/ha, from AGBD paper Section 4.2
 AGBD_PATCH_SIZE = 25  # pixels, from AGBD paper Section 3.3
 AGBD_CENTER_PIXEL = 12  # center position for 25x25 patches
 AGBD_SPATIAL_RESOLUTION = 10  # meters per pixel
+
+def extract_agbd_patch_from_encoder_output(
+    tensor: torch.Tensor, 
+    encoder_size: int,
+    agbd_patch_size: int = 25
+) -> torch.Tensor:
+    """
+    Extract the actual 25x25 AGBD patch from the full encoder output.
+    
+    The AGBD dataset returns 25x25 patches, which get padded to 32x32 for ViT alignment,
+    then cropped to encoder size (224x224, 256x256, etc.) with the AGBD patch centered.
+    
+    This function reverses that process to extract just the AGBD region for visualization.
+    
+    Args:
+        tensor: Model output tensor of shape (H, W) or (B, H, W) at encoder resolution
+        encoder_size: Size of encoder input (e.g., 224, 256, 288, 384)
+        agbd_patch_size: Size of original AGBD patch (default: 25)
+        
+    Returns:
+        Extracted AGBD patch of shape (agbd_patch_size, agbd_patch_size) or (B, agbd_patch_size, agbd_patch_size)
+    """
+    if len(tensor.shape) == 2:
+        # Single sample (H, W)
+        H, W = tensor.shape
+        center_h, center_w = H // 2, W // 2
+        
+        # Extract centered AGBD patch
+        half_size = agbd_patch_size // 2
+        start_h = center_h - half_size
+        end_h = start_h + agbd_patch_size
+        start_w = center_w - half_size  
+        end_w = start_w + agbd_patch_size
+        
+        # Ensure we don't go out of bounds
+        start_h = max(0, start_h)
+        start_w = max(0, start_w)
+        end_h = min(H, end_h)
+        end_w = min(W, end_w)
+        
+        return tensor[start_h:end_h, start_w:end_w]
+        
+    elif len(tensor.shape) == 3:
+        # Batch (B, H, W)
+        B, H, W = tensor.shape
+        center_h, center_w = H // 2, W // 2
+        
+        half_size = agbd_patch_size // 2
+        start_h = center_h - half_size
+        end_h = start_h + agbd_patch_size
+        start_w = center_w - half_size
+        end_w = start_w + agbd_patch_size
+        
+        # Ensure we don't go out of bounds
+        start_h = max(0, start_h)
+        start_w = max(0, start_w)
+        end_h = min(H, end_h)
+        end_w = min(W, end_w)
+        
+        return tensor[:, start_h:end_h, start_w:end_w]
+    else:
+        raise ValueError(f"Unsupported tensor shape: {tensor.shape}")
+
+def extract_agbd_patch_from_inputs(
+    inputs: dict, 
+    sample_idx: int = 0,
+    agbd_patch_size: int = 25
+) -> dict:
+    """
+    Extract the actual AGBD patch from the full encoder inputs for visualization.
+    
+    Args:
+        inputs: Input data dictionary with 'image' containing optical/sar data
+        sample_idx: Which sample in the batch to extract
+        agbd_patch_size: Size of AGBD patch to extract
+        
+    Returns:
+        Dictionary with extracted AGBD patches for each modality
+    """
+    extracted = {}
+    
+    if 'image' in inputs:
+        extracted['image'] = {}
+        for modality, data in inputs['image'].items():
+            # data shape: (B, C, T, H, W)
+            if len(data.shape) == 5:
+                B, C, T, H, W = data.shape
+                center_h, center_w = H // 2, W // 2
+                
+                half_size = agbd_patch_size // 2
+                start_h = max(0, center_h - half_size)
+                end_h = min(H, center_h - half_size + agbd_patch_size)
+                start_w = max(0, center_w - half_size)
+                end_w = min(W, center_w - half_size + agbd_patch_size)
+                
+                # Extract the AGBD patch for the specified sample
+                extracted['image'][modality] = data[sample_idx:sample_idx+1, :, :, start_h:end_h, start_w:end_w]
+            else:
+                # Fallback: use original data
+                extracted['image'][modality] = data[sample_idx:sample_idx+1] if len(data.shape) > 2 else data
+    
+    return extracted
 
 # Scientific colormaps for biomass visualization (inspired by forestry literature)
 BIOMASS_COLORMAP = LinearSegmentedColormap.from_list(
@@ -123,67 +225,60 @@ def create_sar_biomass_visualization(sar_data: torch.Tensor) -> np.ndarray:
     Returns:
         False-color SAR visualization optimized for biomass
     """
-    # print(f"[SAR VIZ DEBUG] Input SAR data shape: {sar_data.shape}")
+    # # print(f"[SAR VIZ DEBUG] Input SAR data shape: {sar_data.shape}")
     
     if sar_data.shape[0] == 0:
-        # print(f"[SAR VIZ DEBUG] Empty SAR data, returning zeros")
+        # # print(f"[SAR VIZ DEBUG] Empty SAR data, returning zeros")
         return np.zeros((sar_data.shape[1], sar_data.shape[2], 3))
     
     sar_np = sar_data.cpu().numpy()
-    # print(f"[SAR VIZ DEBUG] SAR numpy data range: [{sar_np.min():.6f}, {sar_np.max():.6f}]")
+    # # print(f"[SAR VIZ DEBUG] SAR numpy data range: [{sar_np.min():.6f}, {sar_np.max():.6f}]")
     
     if sar_data.shape[0] >= 2:  # HH and HV available
-        # print(f"[SAR VIZ DEBUG] Using multi-polarization SAR visualization")
+        # # print(f"[SAR VIZ DEBUG] Using multi-polarization SAR visualization")
         hh = sar_np[0]  # HH polarization
         hv = sar_np[1]  # HV polarization
         
-        # print(f"[SAR VIZ DEBUG] HH range: [{hh.min():.6f}, {hh.max():.6f}]")
-        # print(f"[SAR VIZ DEBUG] HV range: [{hv.min():.6f}, {hv.max():.6f}]")
+        # # print(f"[SAR VIZ DEBUG] HH range: [{hh.min():.6f}, {hh.max():.6f}]")
+        # # print(f"[SAR VIZ DEBUG] HV range: [{hv.min():.6f}, {hv.max():.6f}]")
         
         # Create biomass-sensitive combination
         # HV/HH ratio is sensitive to vegetation volume (key for biomass)
         ratio = np.divide(hv, hh, out=np.zeros_like(hv), where=(np.abs(hh) > 1e-8))
-        # print(f"[SAR VIZ DEBUG] HV/HH ratio range: [{ratio.min():.6f}, {ratio.max():.6f}]")
+        # # print(f"[SAR VIZ DEBUG] HV/HH ratio range: [{ratio.min():.6f}, {ratio.max():.6f}]")
         
         # Enhanced robust normalization that preserves spatial variation
         def robust_normalize_enhanced(data, channel_name=""):
             if data.size == 0 or not np.isfinite(data).any():
-                # print(f"[SAR VIZ DEBUG] {channel_name}: No finite data, returning zeros")
+                # # print(f"[SAR VIZ DEBUG] {channel_name}: No finite data, returning zeros")
                 return np.zeros_like(data)
             
             finite_data = data[np.isfinite(data)]
             if finite_data.size == 0:
-                # print(f"[SAR VIZ DEBUG] {channel_name}: No finite data after filtering, returning zeros")
+                # # print(f"[SAR VIZ DEBUG] {channel_name}: No finite data after filtering, returning zeros")
                 return np.zeros_like(data)
             
             # Use percentiles to exclude potential padding/outliers while preserving real variation
-            # Filter out extreme padding values first
-            padding_threshold = -15.0  # Values below this are likely padding
-            real_data = finite_data[finite_data > padding_threshold]
-            
-            if real_data.size == 0:
-                # print(f"[SAR VIZ DEBUG] {channel_name}: No real data after filtering padding, using all finite data")
-                real_data = finite_data
-            else:
-                # print(f"[SAR VIZ DEBUG] {channel_name}: Filtered {finite_data.size - real_data.size} padding values")
-            
-            p1, p99 = np.percentile(real_data, [5, 95])  # Use real data for percentiles
+            p1, p99 = np.percentile(finite_data, [1, 99])
             data_spread = p99 - p1
-            # print(f"[SAR VIZ DEBUG] {channel_name}: P5-P95 range (real data): [{p1:.6f}, {p99:.6f}], spread={data_spread:.6f}")
+            # # print(f"[SAR VIZ DEBUG] {channel_name}: P1-P99 range: [{p1:.6f}, {p99:.6f}], spread={data_spread:.6f}")
             
             if data_spread < 1e-6:
-                # If almost no variation in the real data, check if there's any variation at all
-                data_min, data_max = real_data.min(), real_data.max()
+                # If almost no variation in the main data, check if there's any variation at all
+                data_min, data_max = finite_data.min(), finite_data.max()
                 total_spread = data_max - data_min
-                # print(f"[SAR VIZ DEBUG] {channel_name}: Total spread: {total_spread:.6f}")
+                # # print(f"[SAR VIZ DEBUG] {channel_name}: Total spread: {total_spread:.6f}")
                 
                 if total_spread < 1e-8:
-                    # print(f"[SAR VIZ DEBUG] {channel_name}: Truly uniform data, creating spatial gradient")
-                    # Create spatial gradient in earth-tones to avoid blue padding artifacts
+                    # # print(f"[SAR VIZ DEBUG] {channel_name}: Truly uniform data, creating spatial gradient")
+                    # Create spatial gradient in warm colors to avoid blue padding artifacts
                     h, w = data.shape
-                    y_grad = np.linspace(0.2, 0.7, h).reshape(-1, 1)  # Better range
-                    x_grad = np.linspace(0.2, 0.7, w).reshape(1, -1)  
-                    normalized = (y_grad + x_grad) / 2  # Average for more natural gradient
+                    y_grad = np.linspace(0, 0.2, h).reshape(-1, 1)  # Reduced intensity
+                    x_grad = np.linspace(0, 0.2, w).reshape(1, -1)  
+                    normalized = y_grad + x_grad
+                    # Apply warm color transformation to avoid blue
+                    normalized = normalized / normalized.max() if normalized.max() > 0 else normalized
+                    normalized = np.power(normalized, 0.8)  # Warmer gradient
                 else:
                     # Use full range if percentile range is too small
                     normalized = np.clip((data - data_min) / total_spread, 0, 1)
@@ -191,35 +286,20 @@ def create_sar_biomass_visualization(sar_data: torch.Tensor) -> np.ndarray:
                 # Use percentile-based normalization for robust visualization
                 normalized = np.clip((data - p1) / data_spread, 0, 1)
             
-            # Set padding areas to black (0)
             normalized[~np.isfinite(data)] = 0
-            normalized[data <= padding_threshold] = 0  # Set padding values to black
-            # print(f"[SAR VIZ DEBUG] {channel_name}: Normalized range: [{normalized.min():.6f}, {normalized.max():.6f}]")
+            # # print(f"[SAR VIZ DEBUG] {channel_name}: Normalized range: [{normalized.min():.6f}, {normalized.max():.6f}]")
             return normalized
         
-        # Enhanced false color for biomass: Use earth-tones for better visualization
-        # New mapping optimized for biomass and avoiding problematic colors:
-        # HH (surface) -> Red channel, HV (volume) -> Green channel, Ratio -> Blue channel
-        r_channel = robust_normalize_enhanced(hh, "HH")       # HH (surface scattering) -> Red
+        # Enhanced false color for biomass: Use perceptually uniform colors avoiding yellow/white
+        # New mapping: HH→Magenta, HV→Cyan, Ratio→Red for better contrast and biomass sensitivity
+        r_channel = robust_normalize_enhanced(ratio, "Ratio")  # Ratio (biomass sensitive) -> Red
         g_channel = robust_normalize_enhanced(hv, "HV")       # HV (volume scattering) -> Green  
-        b_channel = robust_normalize_enhanced(ratio, "Ratio") # Ratio (biomass sensitive) -> Blue
+        b_channel = robust_normalize_enhanced(hh, "HH")       # HH (surface scattering) -> Blue
         
-        # Apply differential contrast enhancement with earth-tone balance
-        r_channel = np.power(np.clip(r_channel, 0, 1), 0.8)  # Moderate enhancement for HH
-        g_channel = np.power(np.clip(g_channel, 0, 1), 0.6)  # Stronger enhancement for HV (biomass sensitive)
-        b_channel = np.power(np.clip(b_channel, 0, 1), 0.9)  # Light enhancement for ratio
-        
-        # Create earth-tone result avoiding yellow/white artifacts
-        result = np.stack([r_channel, g_channel, b_channel], axis=2)
-        
-        # Apply color balance to reduce harsh yellows and whites
-        # Reduce channels where yellow/white would appear (high R+G, high R+G+B)
-        yellow_mask = (result[:,:,0] > 0.7) & (result[:,:,1] > 0.7)  # Where R+G is high (yellow)
-        white_mask = (result[:,:,0] > 0.8) & (result[:,:,1] > 0.8) & (result[:,:,2] > 0.8)  # Where R+G+B is high (white)
-        
-        # Reduce intensity in problematic areas
-        result[yellow_mask] *= 0.7  # Tone down yellows
-        result[white_mask] *= 0.6   # Tone down whites
+        # Apply differential contrast enhancement with better color balance
+        r_channel = np.power(np.clip(r_channel, 0, 1), 0.7)  # Strong enhancement for ratio (most biomass-sensitive)
+        g_channel = np.power(np.clip(g_channel, 0, 1), 0.6)  # Moderate enhancement for HV  
+        b_channel = np.power(np.clip(b_channel, 0, 1), 0.8)  # Light enhancement for HH
         
         # Enhance contrast while avoiding oversaturation
         r_channel = np.clip(r_channel * 1.2, 0, 1)
@@ -227,11 +307,11 @@ def create_sar_biomass_visualization(sar_data: torch.Tensor) -> np.ndarray:
         b_channel = np.clip(b_channel * 1.0, 0, 1)
         
         result = np.stack([r_channel, g_channel, b_channel], axis=2)
-        # print(f"[SAR VIZ DEBUG] Multi-pol result shape: {result.shape}, range: [{result.min():.6f}, {result.max():.6f}]")
+        # # print(f"[SAR VIZ DEBUG] Multi-pol result shape: {result.shape}, range: [{result.min():.6f}, {result.max():.6f}]")
         return result
     else:
         # Single SAR band visualization with enhanced normalization
-        # print(f"[SAR VIZ DEBUG] Using single-band SAR visualization")
+        # # print(f"[SAR VIZ DEBUG] Using single-band SAR visualization")
         single_band = sar_np[0]
         if single_band.size == 0 or not np.isfinite(single_band).any():
             sar_vis = np.zeros_like(single_band)
@@ -243,7 +323,7 @@ def create_sar_biomass_visualization(sar_data: torch.Tensor) -> np.ndarray:
                 # Use percentile-based normalization for single band
                 p2, p98 = np.percentile(finite_data, [2, 98])
                 data_spread = p98 - p2
-                # print(f"[SAR VIZ DEBUG] Single band P2-P98 range: [{p2:.6f}, {p98:.6f}], spread={data_spread:.6f}")
+                # # print(f"[SAR VIZ DEBUG] Single band P2-P98 range: [{p2:.6f}, {p98:.6f}], spread={data_spread:.6f}")
                 
                 if data_spread < 1e-6:
                     # Create spatial pattern with warm colors if no variation
@@ -253,7 +333,7 @@ def create_sar_biomass_visualization(sar_data: torch.Tensor) -> np.ndarray:
                     sar_vis = y_grad + x_grad
                     sar_vis = sar_vis / sar_vis.max() if sar_vis.max() > 0 else sar_vis
                     sar_vis = np.power(sar_vis, 0.6)  # Enhance visibility without harshness
-                    # print(f"[SAR VIZ DEBUG] Single band: Created warm spatial gradient")
+                    # # print(f"[SAR VIZ DEBUG] Single band: Created warm spatial gradient")
                 else:
                     sar_vis = np.clip((single_band - p2) / data_spread, 0, 1)
                     sar_vis[~np.isfinite(single_band)] = 0
@@ -359,7 +439,7 @@ def log_agbd_regression_visuals(
             elif hasattr(dataset, '__class__'):
                 dataset_name = dataset.__class__.__name__
         
-        # print(f"[VIZ DEBUG] Creating visualizations for {samples_to_viz} samples from dataset: {dataset_name}, model: {model_name}")
+        # # print(f"[VIZ DEBUG] Creating visualizations for {samples_to_viz} samples from dataset: {dataset_name}, model: {model_name}")
         
         # Use center of current patch for consistent visualization
         height, width = pred.shape[-2:]
@@ -367,45 +447,54 @@ def log_agbd_regression_visuals(
         
         for i in range(samples_to_viz):
             try:
-                # Extract central pixel values for metrics
-                pred_center = pred[i, center_h, center_w].item()
-                target_center = target[i, center_h, center_w].item()
-                error = abs(pred_center - target_center)
-                rel_error = (error / (target_center + 1e-6)) * 100  # Relative error in %
-                pred_center = pred[i, center_h, center_w].item()
-                target_center = target[i, center_h, center_w].item()
+                # CRITICAL FIX: Extract actual AGBD patches from full encoder outputs
+                print(f"[VIZ DEBUG] Original pred shape: {pred.shape}, target shape: {target.shape}")
+                
+                # Extract 25x25 AGBD patches from the center of encoder outputs
+                agbd_pred = extract_agbd_patch_from_encoder_output(pred[i], encoder_size=pred.shape[-1])
+                agbd_target = extract_agbd_patch_from_encoder_output(target[i], encoder_size=target.shape[-1])
+                agbd_inputs = extract_agbd_patch_from_inputs(inputs, sample_idx=i)
+                
+                print(f"[VIZ DEBUG] Extracted AGBD pred shape: {agbd_pred.shape}, target shape: {agbd_target.shape}")
+                
+                # Calculate center pixel from AGBD patches (should be 12,12 for 25x25)
+                agbd_center_h = agbd_center_w = agbd_pred.shape[-1] // 2
+                pred_center = agbd_pred[agbd_center_h, agbd_center_w].item()
+                target_center = agbd_target[agbd_center_h, agbd_center_w].item()
                 error = abs(pred_center - target_center)
                 rel_error = (error / (target_center + 1e-6)) * 100  # Relative error in %
                 
-                # Create enhanced visualization figure with fallback panels
-                fig, axes = plt.subplots(3, 3, figsize=(18, 15))
-                fig.suptitle(f'{dataset_name} {model_name} - Sample {i+1}: Pred {pred_center:.1f} Mg/ha, GT {target_center:.1f} Mg/ha, Error {error:.1f} Mg/ha ({rel_error:.1f}%)', 
+                print(f"[VIZ DEBUG] AGBD center pixel - Pred: {pred_center:.2f}, GT: {target_center:.2f}, Error: {error:.2f}")
+                
+                # Create enhanced visualization figure with fallback panels - AGBD PATCHES ONLY
+                fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+                fig.suptitle(f'{dataset_name} {model_name} - Sample {i+1}: Pred {pred_center:.1f} Mg/ha, GT {target_center:.1f} Mg/ha, Error {error:.1f} Mg/ha ({rel_error:.1f}%)\nAGBD 25x25 Patch Visualization', 
                            fontsize=16, fontweight='bold')
                 
-                # 1. Optical RGB visualization with fallback
+                # 1. Optical RGB visualization from AGBD patch
                 optical_visualization_created = False
-                if 'image' in inputs and 'optical' in inputs['image']:
-                    optical_data = inputs['image']['optical'][i, :, 0, :, :]  # Remove temporal dimension
+                if 'image' in agbd_inputs and 'optical' in agbd_inputs['image']:
+                    optical_data = agbd_inputs['image']['optical'][0, :, 0, :, :]  # Remove batch and temporal dimensions
                     try:
-                        rgb_vis = create_rgb_from_bands(optical_data)
+                        rgb_vis = create_agbd_scientific_rgb(optical_data)
                         # Check if RGB has meaningful content
                         rgb_variation = rgb_vis.max() - rgb_vis.min()
-                        # print(f"[VIZ DEBUG] Sample {i}: Optical RGB variation: {rgb_variation:.6f}")
+                        print(f"[VIZ DEBUG] AGBD Sample {i}: Optical RGB variation: {rgb_variation:.6f}")
                         
                         if rgb_variation > 1e-3:  # Has meaningful variation
                             axes[0, 0].imshow(rgb_vis)
-                            axes[0, 0].set_title('S2 Optical RGB\n(B4-B3-B2)')
+                            axes[0, 0].set_title('AGBD S2 Optical RGB\n(25x25 patch, B4-B3-B2)')
                             optical_visualization_created = True
-                            # print(f"[VIZ DEBUG] Sample {i}: Successfully created optical RGB")
+                            print(f"[VIZ DEBUG] AGBD Sample {i}: Successfully created optical RGB")
                         else:
-                            # print(f"[VIZ DEBUG] Sample {i}: Optical RGB has low variation, will show fallback")
+                            print(f"[VIZ DEBUG] AGBD Sample {i}: Optical RGB has low variation, will show fallback")
                     except Exception as e:
-                        # print(f"[VIZ DEBUG] Sample {i}: Optical RGB creation failed: {e}")
+                        print(f"[VIZ DEBUG] AGBD Sample {i}: Optical RGB creation failed: {e}")
                 
                 if not optical_visualization_created:
                     # Fallback optical visualization
-                    if 'image' in inputs and 'optical' in inputs['image']:
-                        optical_data = inputs['image']['optical'][i, :, 0, :, :]
+                    if 'image' in agbd_inputs and 'optical' in agbd_inputs['image']:
+                        optical_data = agbd_inputs['image']['optical'][0, :, 0, :, :]
                         if optical_data.shape[0] >= 3:
                             # Use simple band combination as fallback
                             fallback_bands = optical_data[:3].cpu().numpy()  # First 3 bands
@@ -414,85 +503,159 @@ def log_agbd_regression_visuals(
                             if fallback_rgb.max() > fallback_rgb.min():
                                 fallback_rgb = (fallback_rgb - fallback_rgb.min()) / (fallback_rgb.max() - fallback_rgb.min())
                             axes[0, 0].imshow(fallback_rgb)
-                            axes[0, 0].set_title('S2 Optical (Fallback)\n(B1-B2-B3)')
-                            # print(f"[VIZ DEBUG] Sample {i}: Used optical fallback visualization")
+                            axes[0, 0].set_title('AGBD S2 Optical (Fallback)\n(25x25 patch, B1-B2-B3)')
+                            print(f"[VIZ DEBUG] AGBD Sample {i}: Used optical fallback visualization")
                         else:
                             axes[0, 0].text(0.5, 0.5, 'Insufficient Optical Bands', ha='center', va='center')
-                            axes[0, 0].set_title('S2 Optical (Error)')
+                            axes[0, 0].set_title('AGBD S2 Optical (Error)')
                     else:
                         axes[0, 0].text(0.5, 0.5, 'No Optical Data', ha='center', va='center')
-                        axes[0, 0].set_title('S2 Optical RGB (N/A)')
+                        axes[0, 0].set_title('AGBD S2 Optical RGB (N/A)')
                 
                 axes[0, 0].set_xlabel('Pixel')
                 axes[0, 0].set_ylabel('Pixel')
                 
-                # 2. SAR visualization - handle when SAR is filtered out by model
-                # print(f"[VIZ DEBUG] Sample {i}: Checking for SAR data...")
-                # print(f"[VIZ DEBUG] Sample {i}: 'image' in inputs: {'image' in inputs}")
-                if 'image' in inputs:
-                    # print(f"[VIZ DEBUG] Sample {i}: inputs['image'] keys: {list(inputs['image'].keys())}")
-                    if 'sar' in inputs['image']:
-                        # print(f"[VIZ DEBUG] Sample {i}: SAR shape: {inputs['image']['sar'].shape}")
-                
+                # 2. SAR visualization from AGBD patch
                 sar_visualization_created = False
-                if 'image' in inputs and 'sar' in inputs['image']:
-                    sar_data = inputs['image']['sar'][i, :, 0, :, :]  # Remove temporal dimension
-                    # print(f"[VIZ DEBUG] Sample {i}: SAR data for visualization - shape: {sar_data.shape}, range: [{sar_data.min():.6f}, {sar_data.max():.6f}]")
-                    sar_vis = create_sar_visualization(sar_data)
-                    # print(f"[VIZ DEBUG] Sample {i}: SAR visualization - shape: {sar_vis.shape}, range: [{sar_vis.min():.6f}, {sar_vis.max():.6f}]")
-                    
-                    # Check if SAR visualization has meaningful content
-                    sar_variation = sar_vis.max() - sar_vis.min()
-                    # print(f"[VIZ DEBUG] Sample {i}: SAR visualization variation: {sar_variation:.6f}")
-                    
-                    if sar_variation > 1e-3:  # Has meaningful variation
-                        axes[0, 1].imshow(sar_vis)
-                        axes[0, 1].set_title('SAR Data\n(PALSAR-2 HH/HV)')
-                        sar_visualization_created = True
-                        # print(f"[VIZ DEBUG] Sample {i}: Successfully visualized SAR data with variation")
-                    else:
-                        # print(f"[VIZ DEBUG] Sample {i}: SAR data has low variation, will show fallback")
+                if 'image' in agbd_inputs and 'sar' in agbd_inputs['image']:
+                    sar_data = agbd_inputs['image']['sar'][0, :, 0, :, :]  # Remove batch and temporal dimensions
+                    print(f"[VIZ DEBUG] AGBD Sample {i}: SAR data for visualization - shape: {sar_data.shape}, range: [{sar_data.min():.6f}, {sar_data.max():.6f}]")
+                    try:
+                        sar_vis = create_sar_biomass_visualization(sar_data)
+                        print(f"[VIZ DEBUG] AGBD Sample {i}: SAR visualization - shape: {sar_vis.shape}, range: [{sar_vis.min():.6f}, {sar_vis.max():.6f}]")
+                        
+                        # Check if SAR visualization has meaningful content
+                        sar_variation = sar_vis.max() - sar_vis.min()
+                        print(f"[VIZ DEBUG] AGBD Sample {i}: SAR visualization variation: {sar_variation:.6f}")
+                        
+                        if sar_variation > 1e-3:  # Has meaningful variation
+                            axes[0, 1].imshow(sar_vis)
+                            axes[0, 1].set_title('AGBD SAR Data\n(25x25 patch, PALSAR-2 HH/HV)')
+                            sar_visualization_created = True
+                            print(f"[VIZ DEBUG] AGBD Sample {i}: Successfully visualized SAR data with variation")
+                        else:
+                            print(f"[VIZ DEBUG] AGBD Sample {i}: SAR data has low variation, will show fallback")
+                    except Exception as e:
+                        print(f"[VIZ DEBUG] AGBD Sample {i}: SAR visualization failed: {e}")
                 
                 if not sar_visualization_created:
-                    # Create fallback SAR visualization - always show this for transparency
-                    if 'image' in inputs and 'sar' in inputs['image']:
-                        # Show raw SAR data as grayscale fallback
-                        sar_data = inputs['image']['sar'][i, :, 0, :, :]
+                    # Create fallback SAR visualization from AGBD patch
+                    if 'image' in agbd_inputs and 'sar' in agbd_inputs['image']:
+                        sar_data = agbd_inputs['image']['sar'][0, :, 0, :, :]
                         if sar_data.shape[0] > 0:
                             sar_fallback = sar_data[0].cpu().numpy()  # Use first band
                             # Simple min-max normalization for fallback
                             if sar_fallback.max() > sar_fallback.min():
                                 sar_fallback = (sar_fallback - sar_fallback.min()) / (sar_fallback.max() - sar_fallback.min())
                             axes[0, 1].imshow(sar_fallback, cmap='gray')
-                            axes[0, 1].set_title('SAR Data (Fallback)\n(Raw normalized)')
-                            # print(f"[VIZ DEBUG] Sample {i}: Used SAR fallback visualization")
+                            axes[0, 1].set_title('AGBD SAR Data (Fallback)\n(25x25 patch, Raw normalized)')
+                            print(f"[VIZ DEBUG] AGBD Sample {i}: Used SAR fallback visualization")
                         else:
                             axes[0, 1].text(0.5, 0.5, 'Empty SAR Data\n(No bands)', ha='center', va='center',
                                            bbox=dict(boxstyle="round,pad=0.3", facecolor="orange", alpha=0.8))
-                            axes[0, 1].set_title('SAR Data (Empty)')
+                            axes[0, 1].set_title('AGBD SAR Data (Empty)')
                     else:
                         # SAR data not available (filtered out by model or not in dataset)
                         axes[0, 1].text(0.5, 0.5, 'No SAR Data\n(Model uses optical only)', ha='center', va='center', 
                                        bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.8))
-                        axes[0, 1].set_title('SAR Data (N/A)')
-                        # print(f"[VIZ DEBUG] Sample {i}: SAR data not available for visualization")
+                        axes[0, 1].set_title('AGBD SAR Data (N/A)')
+                        print(f"[VIZ DEBUG] AGBD Sample {i}: SAR data not available for visualization")
                 
                 axes[0, 1].set_xlabel('Pixel')
                 axes[0, 1].set_ylabel('Pixel')
                 
-                # 3. Ground Truth Biomass with enhanced visualization
-                gt_patch = target[i].cpu().numpy()
-                max_biomass = max(gt_patch.max(), pred[i].cpu().numpy().max())
+                # 3. Ground Truth Biomass (AGBD 25x25 patch only)
+                gt_patch = agbd_target.cpu().numpy()
+                max_biomass = max(gt_patch.max(), agbd_pred.cpu().numpy().max())
                 
-                # Main ground truth visualization
+                # Main ground truth visualization - 25x25 AGBD patch
                 im3 = axes[0, 2].imshow(gt_patch, cmap='Greens', vmin=0, vmax=max_biomass)
-                axes[0, 2].set_title(f'Ground Truth Biomass\nCenter: {target_center:.1f} Mg/ha')
+                axes[0, 2].set_title(f'AGBD Ground Truth Biomass\nCenter: {target_center:.1f} Mg/ha (25x25)')
                 axes[0, 2].set_xlabel('Pixel')
                 axes[0, 2].set_ylabel('Pixel')
                 plt.colorbar(im3, ax=axes[0, 2], label='Biomass (Mg/ha)')
                 
-                # 4. Predicted Biomass
-                pred_patch = pred[i].cpu().numpy()
+                # 4. Predicted Biomass (AGBD 25x25 patch only)
+                pred_patch = agbd_pred.cpu().numpy()
+                im4 = axes[1, 0].imshow(pred_patch, cmap='Greens', vmin=0, vmax=max_biomass)
+                axes[1, 0].set_title(f'AGBD Predicted Biomass\nCenter: {pred_center:.1f} Mg/ha (25x25)')
+                axes[1, 0].set_xlabel('Pixel')
+                axes[1, 0].set_ylabel('Pixel')
+                plt.colorbar(im4, ax=axes[1, 0], label='Biomass (Mg/ha)')
+                
+                # 5. Error Map (AGBD 25x25 patch only)
+                error_map = np.abs(pred_patch - gt_patch)
+                im5 = axes[1, 1].imshow(error_map, cmap='Reds')
+                axes[1, 1].set_title(f'AGBD Absolute Error\nCenter: {error:.1f} Mg/ha (25x25)')
+                axes[1, 1].set_xlabel('Pixel')
+                axes[1, 1].set_ylabel('Pixel')
+                plt.colorbar(im5, ax=axes[1, 1], label='Error (Mg/ha)')
+                
+                # 6. AGBD Statistics and Spatial Information
+                axes[1, 2].axis('off')
+                stats_text = f"""
+AGBD 25x25 Patch Statistics:
+* Center Pixel Metrics:
+  - Predicted: {pred_center:.2f} Mg/ha
+  - Ground Truth: {target_center:.2f} Mg/ha
+  - Absolute Error: {error:.2f} Mg/ha
+  - Relative Error: {rel_error:.1f}%
+
+* Patch-wide Statistics:
+  - GT Mean: {gt_patch.mean():.2f} Mg/ha
+  - GT Std: {gt_patch.std():.2f} Mg/ha
+  - Pred Mean: {pred_patch.mean():.2f} Mg/ha
+  - Pred Std: {pred_patch.std():.2f} Mg/ha
+  - Patch Error (MAE): {error_map.mean():.2f} Mg/ha
+  - Patch Error (RMSE): {np.sqrt((error_map**2).mean()):.2f} Mg/ha
+
+* AGBD Spatial Info:
+  - Patch Size: 25x25 pixels
+  - Spatial Resolution: 10m/pixel
+  - Coverage: 250m x 250m
+  - Center Pixel: GEDI footprint location
+  - Model: {model_name}
+  - Dataset: {dataset_name}
+
+* Data Quality:
+  - Valid Pixels: {np.sum(gt_patch != -1)}/625
+  - GT Range: [{gt_patch.min():.1f}, {gt_patch.max():.1f}] Mg/ha
+  - Pred Range: [{pred_patch.min():.1f}, {pred_patch.max():.1f}] Mg/ha
+                axes[1, 2].text(0.02, 0.98, stats_text, transform=axes[1, 2].transAxes, 
+                               fontsize=10, verticalalignment='top', fontfamily='monospace',
+                               bbox=dict(boxstyle="round,pad=0.5", facecolor="lightblue", alpha=0.8))
+                
+                # Log visualization to WandB
+                plt.tight_layout()
+                
+                # Convert to WandB image
+                wandb_image = wandb.Image(
+                    fig, 
+                    caption=f"AGBD {model_name} - Sample {i+1}: 25x25 patch visualization"
+                )
+                
+                wandb_run.log({
+                    f"{prefix}/sample_{i+1}_agbd_patch_visualization": wandb_image,
+                    f"{prefix}/sample_{i+1}_predicted_biomass_center": pred_center,
+                    f"{prefix}/sample_{i+1}_ground_truth_biomass_center": target_center,
+                    f"{prefix}/sample_{i+1}_absolute_error_center": error,
+                    f"{prefix}/sample_{i+1}_relative_error_percent": rel_error,
+                })
+                
+                plt.close(fig)
+                print(f"[VIZ DEBUG] AGBD Sample {i}: Successfully logged 25x25 patch visualization")
+                
+            except Exception as e:
+                print(f"[VIZ DEBUG] AGBD Sample {i}: Visualization failed: {e}")
+                import traceback
+                traceback.print_exc()
+                
+        print(f"[VIZ DEBUG] AGBD Visualization completed for {samples_to_viz} samples")
+        
+    except Exception as e:
+        print(f"[VIZ ERROR] AGBD visualization failed: {e}")
+        import traceback
+        traceback.print_exc()
                 im4 = axes[1, 0].imshow(pred_patch, cmap='Greens', vmin=0, vmax=max(gt_patch.max(), pred_patch.max()))
                 axes[1, 0].set_title(f'Predicted Biomass\nCenter: {pred_center:.1f} Mg/ha')
                 axes[1, 0].set_xlabel('Pixel')
@@ -511,55 +674,16 @@ def log_agbd_regression_visuals(
                 # No central pixel marker for clean error visualization
                 plt.colorbar(im5, ax=axes[1, 1], label='Error (Mg/ha)')
                 
-                # 6. Optical Fallback Grayscale (always shown) - Central patch only
+                # 6. Optical Fallback Grayscale (always shown)
                 if 'image' in inputs and 'optical' in inputs['image']:
                     optical_data = inputs['image']['optical'][i, :, 0, :, :]
-                    # print(f"[VIZ DEBUG] Sample {i}: Optical fallback data shape: {optical_data.shape}")
                     if optical_data.shape[0] > 0:
-                        # Extract central 25x25 patch from padded data (120x120 -> 25x25)
-                        h, w = optical_data.shape[-2:]
-                        center_h, center_w = h // 2, w // 2
-                        patch_size = 25
-                        half_patch = patch_size // 2
-                        
-                        # Extract central patch coordinates  
-                        start_h = center_h - half_patch
-                        end_h = center_h + half_patch + 1
-                        start_w = center_w - half_patch  
-                        end_w = center_w + half_patch + 1
-                        
-                        # print(f"[VIZ DEBUG] Sample {i}: Extracting optical patch [{start_h}:{end_h}, {start_w}:{end_w}] from {h}x{w}")
-                        
-                        # Create grayscale from NIR band for better vegetation contrast
-                        if optical_data.shape[0] >= 8:  # Has B8 (NIR)
-                            optical_gray = optical_data[7, start_h:end_h, start_w:end_w].cpu().numpy()  # B8 NIR
-                            band_name = "B8-NIR"
-                        else:
-                            optical_gray = optical_data[0, start_h:end_h, start_w:end_w].cpu().numpy()  # First band
-                            band_name = "B1"
-                        
-                        # print(f"[VIZ DEBUG] Sample {i}: Optical gray shape: {optical_gray.shape}, range: [{optical_gray.min():.6f}, {optical_gray.max():.6f}]")
-                        
-                        # Enhanced normalization for visualization (handles uniform data)
+                        # Create grayscale from first optical band
+                        optical_gray = optical_data[0].cpu().numpy()
                         if optical_gray.max() > optical_gray.min():
-                            optical_gray_norm = (optical_gray - optical_gray.min()) / (optical_gray.max() - optical_gray.min())
-                        else:
-                            # Uniform data - create visible pattern instead of solid color
-                            # print(f"[VIZ DEBUG] Sample {i}: Uniform optical data, creating checkerboard pattern")
-                            h, w = optical_gray.shape
-                            optical_gray_norm = np.zeros_like(optical_gray)
-                            # Create checkerboard pattern with the original value as intensity
-                            for ii in range(h):
-                                for jj in range(w):
-                                    base_intensity = 0.3 + (optical_gray[ii, jj] - optical_gray.min() + 0.1) * 0.4  # Scale to 0.3-0.7
-                                    if (ii + jj) % 2 == 0:
-                                        optical_gray_norm[ii, jj] = base_intensity * 1.2  # Brighter squares
-                                    else:
-                                        optical_gray_norm[ii, jj] = base_intensity * 0.8  # Darker squares
-                            optical_gray_norm = np.clip(optical_gray_norm, 0, 1)
-                        
-                        axes[1, 2].imshow(optical_gray_norm, cmap='gray')
-                        axes[1, 2].set_title(f'Optical Fallback\n({band_name} Center {optical_gray.shape[0]}x{optical_gray.shape[1]})')
+                            optical_gray = (optical_gray - optical_gray.min()) / (optical_gray.max() - optical_gray.min())
+                        axes[1, 2].imshow(optical_gray, cmap='gray')
+                        axes[1, 2].set_title('Optical Fallback\n(B1 Grayscale)')
                     else:
                         axes[1, 2].text(0.5, 0.5, 'No Optical Bands', ha='center', va='center')
                         axes[1, 2].set_title('Optical Fallback (N/A)')
@@ -569,56 +693,17 @@ def log_agbd_regression_visuals(
                 axes[1, 2].set_xlabel('Pixel')
                 axes[1, 2].set_ylabel('Pixel')
                 
-                # 7. SAR Fallback Grayscale (always shown) - Central patch only
+                # 7. SAR Fallback Grayscale (always shown)
                 if 'image' in inputs and 'sar' in inputs['image']:
                     sar_data = inputs['image']['sar'][i, :, 0, :, :]
-                    # print(f"[VIZ DEBUG] Sample {i}: SAR fallback data shape: {sar_data.shape}")
                     if sar_data.shape[0] > 0:
-                        # Extract central 25x25 patch from padded SAR data (120x120 -> 25x25)
-                        h, w = sar_data.shape[-2:]
-                        center_h, center_w = h // 2, w // 2
-                        patch_size = 25
-                        half_patch = patch_size // 2
-                        
-                        # Extract central patch coordinates
-                        start_h = center_h - half_patch
-                        end_h = center_h + half_patch + 1
-                        start_w = center_w - half_patch
-                        end_w = center_w + half_patch + 1
-                        
-                        # print(f"[VIZ DEBUG] Sample {i}: Extracting SAR patch [{start_h}:{end_h}, {start_w}:{end_w}] from {h}x{w}")
-                        
-                        # Create grayscale from first SAR band (HH) - central patch only
-                        sar_gray = sar_data[0, start_h:end_h, start_w:end_w].cpu().numpy()
-                        # print(f"[VIZ DEBUG] Sample {i}: SAR gray shape: {sar_gray.shape}, range: [{sar_gray.min():.6f}, {sar_gray.max():.6f}]")
-                        
-                        # Enhanced normalization for SAR visualization (handles uniform data and padding)
-                        # Filter out extreme padding values first
-                        finite_data = sar_gray[np.isfinite(sar_gray)]
-                        padding_threshold = -15.0
-                        real_data = finite_data[finite_data > padding_threshold]
-                        
-                        if real_data.size > 0 and real_data.max() > real_data.min():
-                            # Use real data range for normalization
-                            sar_gray_norm = np.clip((sar_gray - real_data.min()) / (real_data.max() - real_data.min()), 0, 1)
-                            # Set padding to black
-                            sar_gray_norm[sar_gray <= padding_threshold] = 0
-                            sar_gray_norm[~np.isfinite(sar_gray)] = 0
-                        else:
-                            # Uniform or mostly padding data - create visible pattern
-                            # print(f"[VIZ DEBUG] Sample {i}: Uniform/padded SAR data, creating spatial pattern")
-                            h, w = sar_gray.shape
-                            sar_gray_norm = np.zeros_like(sar_gray)
-                            # Create diagonal pattern to show spatial structure
-                            for ii in range(h):
-                                for jj in range(w):
-                                    if sar_gray[ii, jj] > padding_threshold:  # Real data areas
-                                        intensity = 0.4 + 0.3 * ((ii + jj) % 3) / 2  # Diagonal pattern
-                                        sar_gray_norm[ii, jj] = intensity
-                        
-                        # Apply warm colormap for better visibility
-                        axes[2, 0].imshow(sar_gray_norm, cmap='copper')
-                        axes[2, 0].set_title(f'SAR Fallback\n(HH Center {sar_gray.shape[0]}x{sar_gray.shape[1]})')
+                        # Create grayscale from first SAR band
+                        sar_gray = sar_data[0].cpu().numpy()
+                        if sar_gray.max() > sar_gray.min():
+                            sar_gray = (sar_gray - sar_gray.min()) / (sar_gray.max() - sar_gray.min())
+                        # Apply warm tone to avoid harsh grays
+                        axes[2, 0].imshow(sar_gray, cmap='copper')
+                        axes[2, 0].set_title('SAR Fallback\n(HH/First Band)')
                     else:
                         axes[2, 0].text(0.5, 0.5, 'Empty SAR Data', ha='center', va='center')
                         axes[2, 0].set_title('SAR Fallback (Empty)')
@@ -628,65 +713,45 @@ def log_agbd_regression_visuals(
                 axes[2, 0].set_xlabel('Pixel')
                 axes[2, 0].set_ylabel('Pixel')
                 
-                # 8. Ground Truth Fallback Grayscale (always shown) - Central patch only
-                # Extract central 25x25 patch from ground truth
-                gt_full = target[i].cpu().numpy()
-                h, w = gt_full.shape
-                center_h, center_w = h // 2, w // 2
-                patch_size = 25
-                half_patch = patch_size // 2
                 
-                # Extract central patch coordinates
-                start_h = center_h - half_patch
-                end_h = center_h + half_patch + 1
-                start_w = center_w - half_patch
-                end_w = center_w + half_patch + 1
+            except Exception as e:
+                print(f"[VIZ DEBUG] AGBD Sample {i}: Visualization failed: {e}")
+                import traceback
+                traceback.print_exc()
                 
-                # print(f"[VIZ DEBUG] Sample {i}: GT full shape: {gt_full.shape}, extracting [{start_h}:{end_h}, {start_w}:{end_w}]")
+        print(f"[VIZ DEBUG] AGBD Visualization completed for {samples_to_viz} samples")
+        
+    except Exception as e:
+        print(f"[VIZ ERROR] AGBD visualization failed: {e}")
+        import traceback
+        traceback.print_exc()
+                    try:
+                        sar_data = inputs['image']['sar'][i, :, 0, :, :]
+                        sar_test = create_sar_visualization(sar_data)
+                        sar_variation = sar_test.max() - sar_test.min()
+                    except:
+                        sar_variation = 0.0
                 
-                # Extract central patch from ground truth
-                gt_center_patch = gt_full[start_h:end_h, start_w:end_w]
-                # print(f"[VIZ DEBUG] Sample {i}: GT center patch shape: {gt_center_patch.shape}, range: [{gt_center_patch.min():.3f}, {gt_center_patch.max():.3f}]")
-                
-                # Show ground truth as grayscale with biomass-appropriate colormap
-                gt_vis = axes[2, 1].imshow(gt_center_patch, cmap='Greys_r', vmin=0, vmax=500)  # 0-500 Mg/ha range
-                axes[2, 1].set_title(f'GT Fallback\n(Center {gt_center_patch.shape[0]}x{gt_center_patch.shape[1]}, {gt_center_patch.mean():.1f} Mg/ha)')
-                axes[2, 1].set_xlabel('Pixel')
-                axes[2, 1].set_ylabel('Pixel')
-                plt.colorbar(gt_vis, ax=axes[2, 1], label='Biomass (Mg/ha)')
-                
-                # 9. Statistics and Metadata Panel
-                axes[2, 2].axis('off')
-                
-                # Calculate quality metrics safely  
-                gt_variation = gt_patch.max() - gt_patch.min()  # Ground truth variation
-                
-                # Create comprehensive info panel
                 info_text = f"""
 Dataset: {dataset_name}
 Model: {model_name}
 
-• Patch Metrics:
-  - Predicted: {pred_center:.2f} Mg/ha
-  - Ground Truth: {target_center:.2f} Mg/ha  
-  - Absolute Error: {error:.2f} Mg/ha
-  - Relative Error: {rel_error:.1f}%
+Visualization Info:
+* Enhanced RGB: True color bands
+* SAR: Multi-pol false color  
+* Fallback: Always displayed
+* Color: Optimized for biomass
+* Spatial: Center pixel focus
 
-• Patch Statistics:
-  - GT Mean: {gt_patch.mean():.2f} Mg/ha
-  - GT Std: {gt_patch.std():.2f} Mg/ha
-  - Pred Mean: {pred_patch.mean():.2f} Mg/ha
-  - Pred Std: {pred_patch.std():.2f} Mg/ha
-
-• Quality Metrics:
-  - GT Variation: {gt_variation:.3f}
-  - Center: ({center_h}, {center_w})
-  - Resolution: ~10-16m/pixel
+Quality Metrics:
+* RGB Variation: {optical_variation:.3f}
+* SAR Variation: {sar_variation:.3f}
+* GT Variation: {gt_variation:.3f}
                 """
                 
                 axes[2, 2].text(0.05, 0.95, info_text, transform=axes[2, 2].transAxes, 
                                fontsize=9, verticalalignment='top', fontfamily='monospace',
-                               bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.8))
+                               bbox=dict(boxstyle="round,pad=0.5", facecolor="lightcyan", alpha=0.8))
                 
                 plt.tight_layout()
                 

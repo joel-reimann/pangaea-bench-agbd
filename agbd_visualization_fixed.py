@@ -656,3 +656,302 @@ AGBD 25x25 Patch Statistics:
         print(f"[VIZ ERROR] AGBD visualization failed: {e}")
         import traceback
         traceback.print_exc()
+                im4 = axes[1, 0].imshow(pred_patch, cmap='Greens', vmin=0, vmax=max(gt_patch.max(), pred_patch.max()))
+                axes[1, 0].set_title(f'Predicted Biomass\nCenter: {pred_center:.1f} Mg/ha')
+                axes[1, 0].set_xlabel('Pixel')
+                axes[1, 0].set_ylabel('Pixel')
+                
+                # No central pixel marker for clean biomass visualization
+                plt.colorbar(im4, ax=axes[1, 0], label='Biomass (Mg/ha)')
+                
+                # 5. Error Map
+                error_map = np.abs(pred_patch - gt_patch)
+                im5 = axes[1, 1].imshow(error_map, cmap='Reds')
+                axes[1, 1].set_title(f'Absolute Error\nCenter: {error:.1f} Mg/ha')
+                axes[1, 1].set_xlabel('Pixel')
+                axes[1, 1].set_ylabel('Pixel')
+                
+                # No central pixel marker for clean error visualization
+                plt.colorbar(im5, ax=axes[1, 1], label='Error (Mg/ha)')
+                
+                # 6. Optical Fallback Grayscale (always shown)
+                if 'image' in inputs and 'optical' in inputs['image']:
+                    optical_data = inputs['image']['optical'][i, :, 0, :, :]
+                    if optical_data.shape[0] > 0:
+                        # Create grayscale from first optical band
+                        optical_gray = optical_data[0].cpu().numpy()
+                        if optical_gray.max() > optical_gray.min():
+                            optical_gray = (optical_gray - optical_gray.min()) / (optical_gray.max() - optical_gray.min())
+                        axes[1, 2].imshow(optical_gray, cmap='gray')
+                        axes[1, 2].set_title('Optical Fallback\n(B1 Grayscale)')
+                    else:
+                        axes[1, 2].text(0.5, 0.5, 'No Optical Bands', ha='center', va='center')
+                        axes[1, 2].set_title('Optical Fallback (N/A)')
+                else:
+                    axes[1, 2].text(0.5, 0.5, 'No Optical Data', ha='center', va='center')
+                    axes[1, 2].set_title('Optical Fallback (N/A)')
+                axes[1, 2].set_xlabel('Pixel')
+                axes[1, 2].set_ylabel('Pixel')
+                
+                # 7. SAR Fallback Grayscale (always shown)
+                if 'image' in inputs and 'sar' in inputs['image']:
+                    sar_data = inputs['image']['sar'][i, :, 0, :, :]
+                    if sar_data.shape[0] > 0:
+                        # Create grayscale from first SAR band
+                        sar_gray = sar_data[0].cpu().numpy()
+                        if sar_gray.max() > sar_gray.min():
+                            sar_gray = (sar_gray - sar_gray.min()) / (sar_gray.max() - sar_gray.min())
+                        # Apply warm tone to avoid harsh grays
+                        axes[2, 0].imshow(sar_gray, cmap='copper')
+                        axes[2, 0].set_title('SAR Fallback\n(HH/First Band)')
+                    else:
+                        axes[2, 0].text(0.5, 0.5, 'Empty SAR Data', ha='center', va='center')
+                        axes[2, 0].set_title('SAR Fallback (Empty)')
+                else:
+                    axes[2, 0].text(0.5, 0.5, 'No SAR Data', ha='center', va='center')
+                    axes[2, 0].set_title('SAR Fallback (N/A)')
+                axes[2, 0].set_xlabel('Pixel')
+                axes[2, 0].set_ylabel('Pixel')
+                
+                
+            except Exception as e:
+                print(f"[VIZ DEBUG] AGBD Sample {i}: Visualization failed: {e}")
+                import traceback
+                traceback.print_exc()
+                
+        print(f"[VIZ DEBUG] AGBD Visualization completed for {samples_to_viz} samples")
+        
+    except Exception as e:
+        print(f"[VIZ ERROR] AGBD visualization failed: {e}")
+        import traceback
+        traceback.print_exc()
+                    try:
+                        sar_data = inputs['image']['sar'][i, :, 0, :, :]
+                        sar_test = create_sar_visualization(sar_data)
+                        sar_variation = sar_test.max() - sar_test.min()
+                    except:
+                        sar_variation = 0.0
+                
+                info_text = f"""
+Dataset: {dataset_name}
+Model: {model_name}
+
+Visualization Info:
+- Sample Index: {i}
+- Predicted Biomass: {pred_center:.1f} Mg/ha
+- Ground Truth Biomass: {target_center:.1f} Mg/ha
+- Absolute Error: {error:.1f} Mg/ha
+- Relative Error: {rel_error:.1f}%
+- AGBD Patch Size: {AGBD_PATCH_SIZE}x{AGBD_PATCH_SIZE} pixels
+- Spatial Resolution: {AGBD_SPATIAL_RESOLUTION} m/pixel
+- Valid Pixels: {np.sum(gt_patch != -1)} / {gt_patch.size}
+- GT Biomass Range: [{gt_patch.min():.1f}, {gt_patch.max():.1f}] Mg/ha
+- Pred Biomass Range: [{pred_patch.min():.1f}, {pred_patch.max():.1f}] Mg/ha
+                """
+                axes[2, 1].text(0.02, 0.98, info_text, transform=axes[2, 1].transAxes, 
+                               fontsize=10, verticalalignment='top', fontfamily='monospace',
+                               bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8))
+                
+                # Log additional metrics to WandB
+                wandb_run.log({
+                    f"{prefix}/sample_{i+1}_agbd_patch_size": AGBD_PATCH_SIZE,
+                    f"{prefix}/sample_{i+1}_spatial_resolution": AGBD_SPATIAL_RESOLUTION,
+                    f"{prefix}/sample_{i+1}_valid_pixels": np.sum(gt_patch != -1),
+                    f"{prefix}/sample_{i+1}_gt_biomass_min": gt_patch.min(),
+                    f"{prefix}/sample_{i+1}_gt_biomass_max": gt_patch.max(),
+                    f"{prefix}/sample_{i+1}_pred_biomass_min": pred_patch.min(),
+                    f"{prefix}/sample_{i+1}_pred_biomass_max": pred_patch.max(),
+                })
+                
+                plt.tight_layout()
+                plt.show()
+                
+            except Exception as e:
+                print(f"[VIZ DEBUG] AGBD Sample {i}: Info panel visualization failed: {e}")
+                import traceback
+                traceback.print_exc()
+                
+    # WandB log for overall batch metrics
+    try:
+        if wandb_run is not None and hasattr(wandb_run, 'log'):
+            # Log batch-level metrics (mean over batch dimension)
+            batch_metrics = {
+                'loss': train_loss,
+                'mae': np.mean(np.abs(pred.cpu().numpy() - target.cpu().numpy())),
+                'mse': np.mean((pred.cpu().numpy() - target.cpu().numpy())**2),
+                'r2_score': r2_score(target.cpu().numpy().flatten(), pred.cpu().numpy().flatten()),
+            }
+            
+            wandb_run.log({
+                f"{prefix}/batch_loss": batch_metrics['loss'],
+                f"{prefix}/batch_mae": batch_metrics['mae'],
+                f"{prefix}/batch_mse": batch_metrics['mse'],
+                f"{prefix}/batch_r2_score": batch_metrics['r2_score'],
+                f"{prefix}/epoch": step,  # Log step as epoch
+            })
+            
+            print(f"[WandB LOG] Step {step}: Loss={batch_metrics['loss']:.4f}, MAE={batch_metrics['mae']:.4f}, MSE={batch_metrics['mse']:.4f}, R2={batch_metrics['r2_score']:.4f}")
+    except Exception as e:
+        print(f"[WandB LOG ERROR] Failed to log batch metrics: {e}")
+        import traceback
+        traceback.print_exc()
+
+# New function: Log AGBD training progress metrics
+def log_agbd_training_progress(
+    epoch: int,
+    batch_idx: int,
+    train_loss: float,
+    val_metrics: dict,
+    wandb_run=None,
+    prefix: str = "train"
+) -> None:
+    """Log AGBD-specific training progress metrics."""
+    if wandb_run is not None:
+        wandb_run.log({
+            f"{prefix}/epoch": epoch,
+            f"{prefix}/batch": batch_idx,
+            f"{prefix}/loss": train_loss,
+            **{f"{prefix}/{k}": v for k, v in val_metrics.items()}
+        })
+
+
+def log_agbd_revolutionary_visuals(
+    inputs: dict,
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    wandb_run=None,
+    step: int = 0,
+    prefix: str = "eval",
+    max_samples: int = 2,
+    normalization_info: str = "original"
+) -> None:
+    """Revolutionary AGBD visualization - calls the main function."""
+    log_agbd_regression_visuals(
+        inputs=inputs,
+        pred=pred,
+        target=target,
+        wandb_run=wandb_run,
+        step=step,
+        prefix=prefix,
+        max_samples=max_samples
+    )
+
+
+def validate_agbd_visualization_setup() -> bool:
+    """
+    Validate that the AGBD visualization system is properly configured.
+    
+    Returns:
+        bool: True if validation successful
+    """
+    try:
+        # Check WandB availability (optional)
+        try:
+            import wandb
+            wandb_available = True
+        except ImportError:
+            wandb_available = False
+            print("[AGBD-VIZ] ⚠️ WandB not available - visualizations will not be logged")
+        
+        # Validate scientific constants
+        assert AGBD_PATCH_SIZE == 25, "AGBD patch size must be 25x25"
+        assert AGBD_CENTER_PIXEL == 12, "AGBD center pixel must be at position 12"
+        assert AGBD_BIOMASS_RANGE == (0, 500), "AGBD biomass range must be 0-500 Mg/ha"
+        
+        print("[AGBD-VIZ] ✅ Validation successful - Revolutionary AGBD visualization ready!")
+        print(f"[AGBD-VIZ] 📊 Scientific constants validated: patch={AGBD_PATCH_SIZE}x{AGBD_PATCH_SIZE}, center=({AGBD_CENTER_PIXEL},{AGBD_CENTER_PIXEL})")
+        print(f"[AGBD-VIZ] 🌍 WandB logging: {'✅ Available' if wandb_available else '❌ Not available'}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"[AGBD-VIZ] ❌ Validation failed: {e}")
+        return False
+
+
+def quick_agbd_visualization(
+    inputs: dict,
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    wandb_run=None,
+    step: int = 0,
+    prefix: str = "eval",
+    revolutionary: bool = True
+) -> None:
+    """
+    Quick access function for AGBD visualization with automatic configuration.
+    
+    This is the main entry point for AGBD visualization. It automatically
+    detects the best visualization approach and creates publication-quality
+    outputs with minimal user configuration.
+    
+    Args:
+        inputs: Multi-modal input dictionary
+        pred: Predicted biomass tensor
+        target: Ground truth biomass tensor  
+        wandb_run: WandB run object (optional)
+        step: Current training step
+        prefix: Logging prefix
+        revolutionary: Use revolutionary visualization (default: True)
+    """
+    # Validate setup
+    if not validate_agbd_visualization_setup():
+        print("[AGBD-VIZ] ⚠️ Using fallback visualization due to validation issues")
+        revolutionary = False
+    
+    # Determine normalization type from inputs
+    normalization_info = "original"  # Default assumption for AGBD
+    if hasattr(inputs, 'normalization') and inputs.normalization:
+        normalization_info = inputs.normalization
+    elif 'metadata' in inputs and 'normalization' in inputs['metadata']:
+        normalization_info = inputs['metadata']['normalization']
+    
+    print(f"[AGBD-VIZ] 🚀 Creating {'revolutionary' if revolutionary else 'standard'} AGBD visualization")
+    print(f"[AGBD-VIZ] 📊 Configuration: step={step}, prefix={prefix}, normalization={normalization_info}")
+    
+    try:
+        if revolutionary:
+            log_agbd_revolutionary_visuals(
+                inputs=inputs,
+                pred=pred,
+                target=target,
+                wandb_run=wandb_run,
+                step=step,
+                prefix=prefix,
+                max_samples=2,  # Recommended for detailed analysis
+                normalization_info=normalization_info
+            )
+        else:
+            # Fallback to standard visualization
+            log_agbd_regression_visuals(
+                inputs=inputs,
+                pred=pred,
+                target=target,
+                wandb_run=wandb_run,
+                step=step,
+                prefix=prefix,
+                max_samples=3
+            )
+        
+        print(f"[AGBD-VIZ] ✅ Visualization completed successfully")
+        
+    except Exception as e:
+        print(f"[AGBD-VIZ] ❌ Visualization failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+# Automatically validate on import
+print("=" * 80)
+print("🚀 AGBD ADVANCED VISUALIZATION MODULE LOADED")
+print("📊 Scientific Foundation: AGBD Paper (2406.04928v3) + PANGAEA Paper (2412.04204v2)")
+print("🎯 Features: Multi-modal fusion, publication-quality outputs")
+print("=" * 80)
+
+# Run validation on import
+_validation_result = validate_agbd_visualization_setup()
+if _validation_result:
+    print("🌟 Ready for publication-quality AGBD biomass visualization!")
+else:
+    print("⚠️ Partial functionality available - check dependencies")
+print("=" * 80)

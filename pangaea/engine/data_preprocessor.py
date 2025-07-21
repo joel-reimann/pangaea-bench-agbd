@@ -8,6 +8,8 @@ import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 from hydra.utils import instantiate
+from .agbd_percentile_normalizer import AGBDPercentileNormalizer
+import os
 
 
 class BasePreprocessor:
@@ -138,34 +140,26 @@ class BandFilter(BasePreprocessor):
 
         self.used_bands_indices = {}
         
-        # SAR band mapping for AGBD compatibility
-        # AGBD provides HH/HV but many models expect VV/VH (Sentinel-1 style)
+        # AGBD FIX: SAR band mapping for compatibility 
+        # AGBD provides HH/HV but many models expect VV/VH (Sentinel-1 standard)
         sar_band_mapping = {
-            'VV': 'HH',  # VV polarization maps to HH
-            'VH': 'HV',  # VH polarization maps to HV
-            'ASC_VV': 'HH',  # Ascending VV maps to HH
-            'ASC_VH': 'HV',  # Ascending VH maps to HV
-            'DSC_VV': 'HH',  # Descending VV maps to HH
-            'DSC_VH': 'HV',  # Descending VH maps to HV
+            'VV': 'HH', 'VH': 'HV', 'ASC_VV': 'HH', 'ASC_VH': 'HV', 'DSC_VV': 'HH', 'DSC_VH': 'HV'
         }
 
         for k in meta["data_bands"].keys():
             if k not in meta["encoder_bands"].keys():
                 continue
                 
-            # Apply SAR band mapping if needed
             if k == 'sar':
+                # Apply SAR band mapping for AGBD compatibility
                 mapped_indices = []
                 for requested_band in meta["encoder_bands"][k]:
-                    # Try direct match first
                     if requested_band in meta["data_bands"][k]:
                         mapped_indices.append(meta["data_bands"][k].index(requested_band))
-                    # Try SAR band mapping
                     elif requested_band in sar_band_mapping:
                         mapped_band = sar_band_mapping[requested_band]
                         if mapped_band in meta["data_bands"][k]:
                             mapped_indices.append(meta["data_bands"][k].index(mapped_band))
-                            # print(f"[BANDFILTER DEBUG] Mapped SAR band {requested_band} -> {mapped_band}")
                 
                 self.used_bands_indices[k] = torch.tensor(mapped_indices, dtype=torch.long)
             else:
@@ -197,24 +191,15 @@ class BandFilter(BasePreprocessor):
                 encoder_modality_N: torch.Tensor of shape (C T H W) (T=1 if single timeframe),
                  },
             "target": torch.Tensor of shape (H W),
-             "metadata": dict}.
-        """
+             "metadata": dict}.         """
 
-        # print(f"[BANDFILTER DEBUG] BandFilter called")
-        # print(f"[BANDFILTER DEBUG] Input modalities: {list(data['image'].keys())}")
-        # print(f"[BANDFILTER DEBUG] Used bands indices: {self.used_bands_indices}")
-        
         data["image"] = {
             k: data["image"][k][v] for k, v in self.used_bands_indices.items()
         }
         
-        # print(f"[BANDFILTER DEBUG] Output modalities: {list(data['image'].keys())}")
+        # AGBD FIX: Check for empty tensors after band filtering
         for k, v in data["image"].items():
-            if v.numel() > 0:
-                # print(f"[BANDFILTER DEBUG] {k}: shape={v.shape}, range=[{v.min().item():.6f}, {v.max().item():.6f}]")
-                pass
-            else:
-                # print(f"[BANDFILTER DEBUG] {k}: shape={v.shape}, EMPTY TENSOR (filtered out all bands)")
+            if v.numel() == 0:
                 print(f"[BANDFILTER WARNING] {k} modality has no bands after filtering - this will likely cause model errors!")
 
         return data
@@ -417,26 +402,12 @@ class NormalizeMinMax(BasePreprocessor):
                 encoder_modality_1: torch.Tensor of shape (C T H W) (T=1 if single timeframe),
                 ...
                 encoder_modality_N: torch.Tensor of shape (C T H W) (T=1 if single timeframe),
-                 },
-            "target": torch.Tensor of shape (H W),
+                 },             "target": torch.Tensor of shape (H W),
              "metadata": dict}.
         """
-        
-        # CRITICAL DEBUG: Track normalization
-        # print(f"[NORMALIZER DEBUG] NormalizeMinMax called")
-        # print(f"[NORMALIZER DEBUG] Available modalities: {list(data['image'].keys())}")
-        # print(f"[NORMALIZER DEBUG] Data min keys: {list(self.data_min.keys())}")
-        # print(f"[NORMALIZER DEBUG] Data max keys: {list(self.data_max.keys())}")
 
         for k in self.data_min.keys():
             if k in data["image"]:
-                # print(f"[NORMALIZER DEBUG] Before normalization {k}:")
-                # print(f"[NORMALIZER DEBUG]   Shape: {data['image'][k].shape}")
-                # print(f"[NORMALIZER DEBUG]   Range: [{data['image'][k].min().item():.6f}, {data['image'][k].max().item():.6f}]")
-                # print(f"[NORMALIZER DEBUG]   Mean: {data['image'][k].mean().item():.6f}")
-                # print(f"[NORMALIZER DEBUG]   Data min: {self.data_min[k]}")
-                # print(f"[NORMALIZER DEBUG]   Data max: {self.data_max[k]}")
-                
                 data["image"][k].sub_(self.data_min[k].view(-1, 1, 1, 1)).div_(
                     (self.data_max[k] - self.data_min[k]).view(-1, 1, 1, 1)
                 )
@@ -445,7 +416,6 @@ class NormalizeMinMax(BasePreprocessor):
                 # print(f"[NORMALIZER DEBUG]   Range: [{data['image'][k].min().item():.6f}, {data['image'][k].max().item():.6f}]")
                 # print(f"[NORMALIZER DEBUG]   Mean: {data['image'][k].mean().item():.6f}")
             else:
-                # print(f"[NORMALIZER DEBUG] Modality {k} not in data, available: {list(data['image'].keys())}")
                 pass
                 
         return data
@@ -530,25 +500,32 @@ class RandomCrop(BasePreprocessor):
                 padded_img[:, :, pad_img[0] : -pad_img[0], pad_img[1] : -pad_img[1]] = v
                 data["image"][k] = padded_img
 
-            # Use correct padding tuple for TF.pad: (left, top, right, bottom)
-            padding = (pad_img[1], pad_img[0], pad_img[1], pad_img[0])
-            # print(f"[CROP DEBUG] check_pad: using padding={padding} for TF.pad on target")
-            # print(f"[CROP DEBUG] Target before padding: shape={data['target'].shape}, range=[{data['target'].min().item():.6f}, {data['target'].max().item():.6f}]")
+            # AGBD FIX: For regression tasks, preserve single-pixel supervision during padding
+            # Check if this is AGBD data (single valid pixel surrounded by ignore_index)
+            valid_pixels = torch.sum(data["target"] != self.ignore_index)
             
-            # CRITICAL FIX: For regression tasks, do NOT use ignore_index for padding
-            # Instead, pad with the center pixel value (which contains the regression target)
-            center_y, center_x = data["target"].shape[0] // 2, data["target"].shape[1] // 2
-            center_value = data["target"][center_y, center_x].item()
-            # print(f"[CROP DEBUG] Using center pixel value {center_value:.6f} for padding instead of ignore_index {self.ignore_index}")
-            
-            data["target"] = TF.pad(
-                data["target"],
-                padding=padding,
-                fill=center_value,  # Use center pixel value instead of ignore_index
-                padding_mode="constant",
-            )
-            
-            # print(f"[CROP DEBUG] Target after padding: shape={data['target'].shape}, range=[{data['target'].min().item():.6f}, {data['target'].max().item():.6f}]")
+            if valid_pixels == 1:
+                # This is likely AGBD - preserve single pixel supervision
+                print(f"[PADDING DEBUG] AGBD detected: single valid pixel, preserving during padding")
+                padding = (pad_img[1], pad_img[0], pad_img[1], pad_img[0])
+                data["target"] = TF.pad(
+                    data["target"],
+                    padding=padding,
+                    fill=self.ignore_index,  # Pad with ignore_index to maintain single-pixel supervision
+                    padding_mode="constant",
+                )
+            else:
+                # For other regression tasks, use center pixel value for padding
+                padding = (pad_img[1], pad_img[0], pad_img[1], pad_img[0])
+                center_y, center_x = data["target"].shape[0] // 2, data["target"].shape[1] // 2
+                center_value = data["target"][center_y, center_x].item()
+                
+                data["target"] = TF.pad(
+                    data["target"],
+                    padding=padding,
+                    fill=center_value,
+                    padding_mode="constant",
+                )
 
         return data
 
@@ -627,30 +604,38 @@ class FocusRandomCrop(RandomCrop):
         h, w = data["target"].shape
         th, tw = self.size
 
+        print(f"[FOCUSCROP DEBUG] Target shape: {(h, w)}, Crop size: {(th, tw)}")
+
         if h < th or w < tw:
             raise ValueError(
                 f"Required crop size {(th, tw)} is larger than input image size {(h, w)}"
             )
 
         if w == tw and h == th:
+            print(f"[FOCUSCROP DEBUG] No cropping needed - shapes match")
             return 0, 0, h, w
 
         valid_map = data["target"] != self.ignore_index
         
-        # CRITICAL FIX: For regression tasks, ignore_index should never appear in targets
-        # If we're here, all pixels should be valid for regression
+        # AGBD FIX: For regression tasks, ensure we have valid pixels for cropping
         if torch.sum(valid_map) == 0:
-            # print(f"[CROP DEBUG] WARNING: No valid pixels found (all are ignore_index {self.ignore_index})")
-            # print(f"[CROP DEBUG] Target stats: shape={data['target'].shape}, min={data['target'].min().item():.6f}, max={data['target'].max().item():.6f}")
-            # For regression, treat all pixels as valid
+            # For regression, treat all pixels as valid if no ignore_index pixels found
             valid_map = torch.ones_like(data["target"], dtype=torch.bool)
+        
+        print(f"[FOCUSCROP DEBUG] Valid pixels: {torch.sum(valid_map).item()}/{valid_map.numel()}")
+        print(f"[FOCUSCROP DEBUG] Valid pixel locations: {torch.nonzero(valid_map).squeeze()}")
         
         idx = torch.arange(0, h * w)[valid_map.flatten()]
         sample = idx[random.randint(0, idx.shape[0] - 1)]
         y, x = sample // w, sample % w
 
+        print(f"[FOCUSCROP DEBUG] Selected valid pixel: ({y.item()}, {x.item()})")
+
         i = random.randint(max(0, y - th), min(y, h - th + 1))
         j = random.randint(max(0, x - tw), min(x, w - tw + 1))
+
+        print(f"[FOCUSCROP DEBUG] Crop window: i={i}, j={j} (top-left corner)")
+        print(f"[FOCUSCROP DEBUG] Selected pixel will be at: ({y.item()-i}, {x.item()-j}) in cropped space")
 
         return i, j, th, tw
 
@@ -1028,6 +1013,73 @@ class RandomResizedCropToEncoder(RandomResizedCrop):
         )
 
 
+class AGBDPercentileNormalize:
+    """
+    AGBD-specific percentile normalization to match original implementation.
+    
+    Original AGBD uses norm_strat='pct' with 1st and 99th percentiles,
+    while Pangaea uses min/max normalization. This causes ~5-6x difference
+    in input ranges, preventing proper model learning.
+    
+    Based on statistics from: statistics_subset_2019-2020-v4_new.pkl
+    """
+    
+    def __init__(self, stats_path: str = None, **kwargs):
+        """
+        Initialize with path to AGBD statistics file.
+        
+        Args:
+            stats_path: Path to statistics_subset_2019-2020-v4_new.pkl
+                       If None, will try to find it in dataset paths
+            **kwargs: Additional arguments (ignored, for Hydra compatibility)
+        """
+        if stats_path is None:
+            # Try common paths for AGBD data
+            possible_paths = [
+                '/scratch/reimannj/pangaea_agbd_integration_final/data/agbd/statistics_subset_2019-2020-v4_new.pkl',
+                './data/agbd/statistics_subset_2019-2020-v4_new.pkl',
+                '../data/agbd/statistics_subset_2019-2020-v4_new.pkl'
+            ]
+            for path in possible_paths:
+                if os.path.exists(path):
+                    stats_path = path
+                    break
+                    
+        if stats_path is None or not os.path.exists(stats_path):
+            raise FileNotFoundError(f"AGBD statistics file not found. Please provide stats_path.")
+            
+        self.normalizer = AGBDPercentileNormalizer(stats_path)
+        
+    def __call__(self, data):
+        """Apply percentile normalization to multi-modal data."""
+        # Extract tensors by modality
+        modal_data = {}
+        
+        if hasattr(data, 'optical') and data.optical is not None:
+            modal_data['optical'] = data.optical
+        if hasattr(data, 'sar') and data.sar is not None:
+            modal_data['sar'] = data.sar
+            
+        # Apply percentile normalization
+        if modal_data:
+            normalized = self.normalizer.normalize_optical(modal_data['optical']) if 'optical' in modal_data else None
+            normalized_sar = self.normalizer.normalize_sar(modal_data['sar']) if 'sar' in modal_data else None
+            
+            # Update data object
+            if normalized is not None:
+                data.optical = normalized
+            if normalized_sar is not None:
+                data.sar = normalized_sar
+                
+        return data
+        
+    def update_meta(self, meta):
+        """Update metadata - percentile normalization doesn't change structure."""
+        # Percentile normalization doesn't change band structure or metadata,
+        # just the value ranges, so we pass metadata through unchanged
+        return meta
+        
+
 def _setup_size(size, error_msg):
     if isinstance(size, numbers.Number):
         return int(size), int(size)
@@ -1039,4 +1091,95 @@ def _setup_size(size, error_msg):
         raise ValueError(error_msg)
 
     return size
+
+
+class AGBDCenterCropToEncoder(RandomCrop):
+    def __init__(self, pad_if_needed: bool = False, **meta) -> None:
+        """Initialize the AGBDCenterCropToEncoder preprocessor.
+        
+        This class is specifically designed for AGBD to ensure the GEDI measurement
+        pixel is always centered in the cropped region, preserving spatial alignment.
+        
+        Args:
+            pad_if_needed (bool, optional): whether to pad. Defaults to False.
+            meta: statistics/info of the input data and target encoder
+                encoder_input_size: required encoder input size
+                data_mean: global mean value of incoming data for potential padding
+                ignore_index: ignore index for potential padding
+        """
+        size = meta["encoder_input_size"]
+        super().__init__(size, pad_if_needed, **meta)
+        print(f"[AGBD CENTERCROP] Initialized with encoder_input_size: {size}")
+
+    def get_params(self, data: dict) -> Tuple[int, int, int, int]:
+        """Get parameters for center crop around GEDI measurement pixel.
+
+        Args:
+            data (dict): input data with 'target' containing GEDI measurement.
+        Returns:
+            tuple: params (i, j, h, w) to be passed to ``crop`` for center crop.
+        """
+        h, w = data["target"].shape
+        th, tw = self.size
+
+        print(f"[AGBD CENTERCROP] Target shape: {(h, w)}, Crop size: {(th, tw)}")
+
+        if h < th or w < tw:
+            raise ValueError(
+                f"Required crop size {(th, tw)} is larger than input image size {(h, w)}"
+            )
+
+        if w == tw and h == th:
+            print(f"[AGBD CENTERCROP] No cropping needed - shapes match")
+            return 0, 0, h, w
+
+        # Find the GEDI measurement pixel (should be exactly one valid pixel)
+        valid_map = data["target"] != self.ignore_index
+        valid_pixels = torch.nonzero(valid_map)
+        
+        print(f"[AGBD CENTERCROP] Valid pixels found: {len(valid_pixels)}")
+        
+        if len(valid_pixels) == 0:
+            # Fallback: use geometric center if no valid pixels found
+            print(f"[AGBD CENTERCROP] WARNING: No valid pixels found, using geometric center")
+            gedi_y, gedi_x = h // 2, w // 2
+        elif len(valid_pixels) == 1:
+            # Expected case: exactly one GEDI measurement pixel
+            gedi_y, gedi_x = valid_pixels[0][0].item(), valid_pixels[0][1].item()
+            print(f"[AGBD CENTERCROP] GEDI pixel found at: ({gedi_y}, {gedi_x})")
+        else:
+            # Multiple valid pixels: use the center-most one
+            print(f"[AGBD CENTERCROP] WARNING: {len(valid_pixels)} valid pixels found, expected 1")
+            center_y, center_x = h // 2, w // 2
+            distances = torch.sum((valid_pixels.float() - torch.tensor([center_y, center_x]).float()) ** 2, dim=1)
+            closest_idx = torch.argmin(distances)
+            gedi_y, gedi_x = valid_pixels[closest_idx][0].item(), valid_pixels[closest_idx][1].item()
+            print(f"[AGBD CENTERCROP] Using center-most valid pixel: ({gedi_y}, {gedi_x})")
+
+        # Center the crop on the GEDI pixel
+        # Calculate crop window to center on GEDI measurement
+        center_offset_h = th // 2
+        center_offset_w = tw // 2
+        
+        # Ideal crop position (may go outside bounds)
+        ideal_i = gedi_y - center_offset_h
+        ideal_j = gedi_x - center_offset_w
+        
+        # Clamp to valid bounds
+        i = max(0, min(ideal_i, h - th))
+        j = max(0, min(ideal_j, w - tw))
+        
+        print(f"[AGBD CENTERCROP] Crop window: i={i}, j={j} (top-left corner)")
+        print(f"[AGBD CENTERCROP] GEDI pixel will be at: ({gedi_y-i}, {gedi_x-j}) in cropped space")
+        
+        # Verify the GEDI pixel will be in reasonable position in cropped space
+        final_gedi_y = gedi_y - i
+        final_gedi_x = gedi_x - j
+        
+        if not (0 <= final_gedi_y < th and 0 <= final_gedi_x < tw):
+            print(f"[AGBD CENTERCROP] ERROR: GEDI pixel outside crop bounds!")
+        elif abs(final_gedi_y - th//2) > 5 or abs(final_gedi_x - tw//2) > 5:
+            print(f"[AGBD CENTERCROP] WARNING: GEDI pixel not well-centered. Expected: ({th//2}, {tw//2}), Got: ({final_gedi_y}, {final_gedi_x})")
+
+        return i, j, th, tw
 
