@@ -261,7 +261,6 @@ TRAIN_CMD="\$TRAIN_CMD \\
     dataset=agbd \\
     encoder=${encoder} \\
     decoder=reg_upernet \\
-    preprocessing=reg_agbd_original \\
     criterion=mse \\
     task=regression \\
     optimizer=adamw \\

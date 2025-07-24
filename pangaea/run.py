@@ -137,12 +137,10 @@ def main(cfg: DictConfig) -> None:
         cfg.decoder,
         encoder=encoder,
     )
-    # AGBD FIX: Ensure encoder is properly set if not injected by hydra
     if getattr(decoder, "encoder", None) is None:
         decoder.encoder = encoder
     decoder.to(device)
 
-    # AGBD: Optional model printing for debugging
     if cfg.show_model:
         logger.info(f"====== Encoder architecture: ======")
         logger.info(encoder)
@@ -167,7 +165,7 @@ def main(cfg: DictConfig) -> None:
     collate_fn = get_collate_fn(modalities)
 
     # training
-    if train_run or cfg.task.trainer.model_name == "knn_probe":
+    if train_run or getattr(cfg.encoder, 'model_name', None) == "knn_probe":
         # get preprocessor
         train_preprocessor = instantiate(
             cfg.preprocessing.train,
@@ -318,7 +316,7 @@ def main(cfg: DictConfig) -> None:
     else:
         model_ckpt_path = get_best_model_ckpt_path(exp_dir)
         
-    if model_ckpt_path is None and not cfg.task.trainer.model_name == "knn_probe":
+    if model_ckpt_path is None and not getattr(cfg.encoder, 'model_name', None) == "knn_probe":
         raise ValueError(f"No model checkpoint found in {exp_dir}")
     
     test_evaluator.evaluate(decoder, "test_model", model_ckpt_path)

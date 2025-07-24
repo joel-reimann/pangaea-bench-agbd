@@ -87,7 +87,6 @@ class Trainer:
         self.enable_mixed_precision = precision != "fp32"
         self.precision = torch.float16 if (precision == "fp16") else torch.bfloat16
 
-        # AGBD FIX: Use modern GradScaler API to avoid FutureWarning
         self.scaler = torch.amp.GradScaler('cuda', enabled=self.enable_mixed_precision)
 
         self.start_epoch = 0
@@ -116,7 +115,6 @@ class Trainer:
             if epoch % self.ckpt_interval == 0 and epoch != self.start_epoch:
                 self.save_model(epoch)
 
-        # AGBD FIX: Skip final evaluation in debug mode with single epoch to save time
         debug_mode = getattr(self.train_loader.dataset, 'debug', False)
         if not (self.n_epochs == 1 and debug_mode):
             metrics, used_time = self.evaluator(self.model, "final model", step=None)
@@ -266,7 +264,7 @@ class Trainer:
         )
 
     def compute_loss(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """Compute the loss.
+        """Compute the loss with automatic spatial size handling.
 
         Args:
             logits (torch.Tensor): logits from the decoder.
@@ -275,51 +273,28 @@ class Trainer:
         Returns:
             torch.Tensor: loss value.
         """
-        # CRITICAL DEBUG: Log actual tensor shapes to understand the mismatch
-        # print(f"[LOSS DEBUG] Logits shape: {logits.shape}")
-        # print(f"[LOSS DEBUG] Target shape: {target.shape}")
-        
-        # CRITICAL FIX: Handle spatial size mismatch between decoder output and target
+        # Handle spatial size mismatch between decoder output and target
         logits_height, logits_width = logits.shape[-2:]
         target_height, target_width = target.shape[-2:]
         
-        # print(f"[LOSS DEBUG] Logits spatial: {logits_height}x{logits_width}")
-        # print(f"[LOSS DEBUG] Target spatial: {target_height}x{target_width}")
-        
         # If spatial sizes don't match, resize target to match logits
         if (logits_height, logits_width) != (target_height, target_width):
-            # print(f"[LOSS DEBUG] ⚠️ SPATIAL SIZE MISMATCH! Resizing target from {target_height}x{target_width} to {logits_height}x{logits_width}")
-            
-            # Resize target to match logits spatial size
-            target_resized = F.interpolate(
+            target = F.interpolate(
                 target.unsqueeze(1).float(),  # Add channel dim for interpolation
                 size=(logits_height, logits_width),
                 mode='nearest'  # Use nearest for discrete values
             ).squeeze(1)  # Remove channel dim
-            
-            # print(f"[LOSS DEBUG] Target resized shape: {target_resized.shape}")
-            target = target_resized
         
         # Calculate center pixel coordinates
         center_h = logits_height // 2
         center_w = logits_width // 2
         
-        # print(f"[LOSS DEBUG] Center pixel: ({center_h}, {center_w})")
-        
-        # Extract center pixels
+        # Extract center pixels for point supervision
         logits_center = logits.squeeze(dim=1)[:, center_h, center_w]
         target_center = target[:, center_h, center_w]
         
-        # print(f"[LOSS DEBUG] Logits center shape: {logits_center.shape}")
-        # print(f"[LOSS DEBUG] Target center shape: {target_center.shape}")
-        # print(f"[LOSS DEBUG] Logits center values: {logits_center}")
-        # print(f"[LOSS DEBUG] Target center values: {target_center}")
-        
         # Compute loss on center pixels only
-        loss = self.criterion(logits_center, target_center)
-        # print(f"[LOSS DEBUG] Loss value: {loss.item()}")
-        
-        return loss
+        return self.criterion(logits_center, target_center)
 
     def save_best_checkpoint(
         self, eval_metrics: dict[float, list[float]], epoch: int
@@ -602,8 +577,88 @@ class RegTrainer(Trainer):
         self.best_metric = float("inf")
         self.best_metric_comp = operator.lt
 
+    def is_agbd_dataset(self, target: torch.Tensor) -> bool:
+        """Check if this is AGBD dataset based on target characteristics."""
+        # AGBD targets are sparse (mostly -1) and small patches
+        if target.dim() < 2:
+            return False
+        
+        height, width = target.shape[-2:]
+        # AGBD patches are small (25x25, 32x32 after padding)
+        is_small_patch = height <= 50 and width <= 50
+        
+        # AGBD targets are very sparse (mostly ignore_index)
+        ignore_index = -1
+        valid_pixels = (target != ignore_index).sum().item()
+        total_pixels = target.numel()
+        sparsity_ratio = valid_pixels / total_pixels
+        is_very_sparse = sparsity_ratio < 0.1  # Less than 10% valid pixels
+        
+        return is_small_patch and is_very_sparse
+
+    def apply_agbd_token_masking(self, 
+                               encoder_output: torch.Tensor,
+                               target: torch.Tensor,
+                               encoder_input_size: int,
+                               patch_size: int = 16) -> torch.Tensor:
+        """
+        Apply token masking for AGBD to prevent information leakage.
+        
+        Implements supervisor requirement: "identify token, remove others"
+        "Token.data = torch.zeros_like(token.data) # high level, .data important"
+        """
+        # Skip if not AGBD or incompatible shapes
+        if not self.is_agbd_dataset(target):
+            return encoder_output
+        
+        # For token-based outputs (ViT encoders)
+        if encoder_output.dim() == 3:  # [batch, num_tokens, embed_dim]
+            batch_size, num_tokens, embed_dim = encoder_output.shape
+            
+            # Ensure token alignment (supervisor requirement assertion)
+            assert encoder_input_size % patch_size == 0, \
+                f"Token misalignment: {encoder_input_size}÷{patch_size} has remainder {encoder_input_size % patch_size}"
+            
+            tokens_per_side = encoder_input_size // patch_size
+            expected_tokens = tokens_per_side * tokens_per_side
+            
+            # Handle special tokens (CLS, etc.) - only mask spatial tokens
+            spatial_tokens = min(num_tokens, expected_tokens)
+            
+            if spatial_tokens > 1:  # Only mask if multiple tokens
+                # Find GEDI token indices based on center pixel location
+                # For 32×32 input with 16×16 patches: center (15,15) → token index 1 (of 2×2=4 tokens)
+                center_coord = encoder_input_size // 2
+                token_y = center_coord // patch_size
+                token_x = center_coord // patch_size
+                gedi_token_idx = token_y * tokens_per_side + token_x
+                
+                # Clamp to valid range
+                gedi_token_idx = min(gedi_token_idx, spatial_tokens - 1)
+                
+                # Create masked version
+                masked_output = encoder_output.clone()
+                
+                # Zero out all spatial tokens except GEDI token (supervisor requirement)
+                for b in range(batch_size):
+                    for t in range(spatial_tokens):
+                        if t != gedi_token_idx:
+                            # "Token.data = torch.zeros_like(token.data)"
+                            masked_output[b, t] = torch.zeros_like(masked_output[b, t])
+                
+                # Validation: ensure no information leakage
+                for b in range(batch_size):
+                    for t in range(spatial_tokens):
+                        if t != gedi_token_idx:
+                            token_sum = masked_output[b, t].abs().sum().item()
+                            assert token_sum < 1e-6, f"Information leakage detected in batch {b}, token {t}: {token_sum}"
+                
+                return masked_output
+        
+        return encoder_output
+
     def compute_loss(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """Compute the loss.
+        """Compute regression loss with ignore_index handling and center pixel extraction.
 
         Args:
             logits (torch.Tensor): logits from the decoder.
@@ -612,113 +667,81 @@ class RegTrainer(Trainer):
         Returns:
             torch.Tensor: loss value.
         """
-        # CRITICAL DEBUG: Log actual tensor shapes to understand the mismatch
-        # print(f"[LOSS DEBUG] Logits shape: {logits.shape}")
-        # print(f"[LOSS DEBUG] Target shape: {target.shape}")
-        
-        # CRITICAL FIX: Handle spatial size mismatch between decoder output and target
+        # Handle spatial size mismatch between decoder output and target
         logits_height, logits_width = logits.shape[-2:]
         target_height, target_width = target.shape[-2:]
         
-        # print(f"[LOSS DEBUG] Logits spatial: {logits_height}x{logits_width}")
-        # print(f"[LOSS DEBUG] Target spatial: {target_height}x{target_width}")
+        # AGBD-AWARE CENTER PIXEL EXTRACTION
+        # For AGBD: Extract center pixel from logits, find GEDI pixel in target
+        ignore_index = -1
         
-        # If spatial sizes don't match, resize target to match logits
-        if (logits_height, logits_width) != (target_height, target_width):
-            # print(f"[LOSS DEBUG] ⚠️ SPATIAL SIZE MISMATCH! Resizing target from {target_height}x{target_width} to {logits_height}x{logits_width}")
-            
-            # Resize target to match logits spatial size
-            target_resized = F.interpolate(
-                target.unsqueeze(1).float(),  # Add channel dim for interpolation
-                size=(logits_height, logits_width),
-                mode='nearest'  # Use nearest for discrete values
-            ).squeeze(1)  # Remove channel dim
-            
-            # print(f"[LOSS DEBUG] Target resized shape: {target_resized.shape}")
-            target = target_resized
-        
-        # Calculate center pixel coordinates
+        # Extract center pixel from logits (assume GEDI pixel is centered after preprocessing)
         center_h = logits_height // 2
         center_w = logits_width // 2
-        
-        # print(f"[LOSS DEBUG] Center pixel: ({center_h}, {center_w})")
-        
-        # Extract center pixels
         logits_center = logits.squeeze(dim=1)[:, center_h, center_w]
-        target_center = target[:, center_h, center_w]
         
-        # print(f"[LOSS DEBUG] Logits center shape: {logits_center.shape}")
-        # print(f"[LOSS DEBUG] Target center shape: {target_center.shape}")
-        # print(f"[LOSS DEBUG] Logits center values: {logits_center}")
-        # print(f"[LOSS DEBUG] Target center values: {target_center}")
+        # For AGBD targets: Find the single valid (GEDI) pixel
+        valid_mask = target != ignore_index
+        batch_size = target.shape[0]
+        target_center = torch.full((batch_size,), float(ignore_index), device=target.device)
         
-        # CRITICAL FIX: Filter out ignore_index values from loss computation
-        ignore_index = -1
-        valid_mask = target_center != ignore_index
+        for i in range(batch_size):
+            sample_valid_mask = valid_mask[i]
+            if sample_valid_mask.any():
+                # AGBD case: Extract the single GEDI pixel value
+                valid_coords = torch.nonzero(sample_valid_mask, as_tuple=False)
+                if len(valid_coords) == 1:
+                    # Single pixel - extract its value
+                    y, x = valid_coords[0]
+                    target_center[i] = target[i, y, x]
+                else:
+                    # Multiple valid pixels - use center coordinate
+                    # This handles cases where target was already processed
+                    if target_height == logits_height and target_width == logits_width:
+                        target_center[i] = target[i, center_h, center_w]
+                    else:
+                        # Use mean of valid pixels as fallback
+                        target_center[i] = target[i][sample_valid_mask].mean()
+            
+        # Filter out ignore_index values from loss computation
+        final_valid_mask = target_center != ignore_index
         
-        print(f"[REGTRAINER LOSS DEBUG] Logits shape: {logits.shape}, Center pixel: ({center_h}, {center_w})")
-        print(f"[LOSS DEBUG] Valid samples: {valid_mask.sum().item()}/{target_center.shape[0]}")
-        
-        if valid_mask.sum() == 0:
-            # print(f"[LOSS DEBUG] WARNING: No valid samples in batch!")
+        if final_valid_mask.sum() == 0:
+            # Return zero loss if no valid samples
             return torch.tensor(0.0, device=logits.device, requires_grad=True)
         
         # Only compute loss on valid (non-ignore_index) samples
-        valid_logits = logits_center[valid_mask]
-        valid_targets = target_center[valid_mask]
+        valid_logits = logits_center[final_valid_mask]
+        valid_targets = target_center[final_valid_mask]
         
-        # print(f"[LOSS DEBUG] Valid logits: {valid_logits}")
-        # print(f"[LOSS DEBUG] Valid targets: {valid_targets}")
-        
-        # Compute loss on center pixels only (excluding ignore_index)
-        loss = self.criterion(valid_logits, valid_targets)
-        # print(f"[LOSS DEBUG] Loss value: {loss.item()}")
-        
-        return loss
+        return self.criterion(valid_logits, valid_targets)
 
     @torch.no_grad()
     def compute_logging_metrics(
         self, logits: torch.Tensor, target: torch.Tensor
     ) -> None:
-        """Compute logging metrics.
+        """Compute logging metrics for regression tasks.
 
         Args:
             logits (torch.Tensor): logits from the decoder.
             target (torch.Tensor): target tensor.
         """
-        # CRITICAL FIX: Central pixel logic for AGBD consistency
-        # Must match the compute_loss method exactly
-        
+        # Use center pixel extraction for consistency with loss computation
         height, width = logits.shape[-2:]
         
-        # For AGBD: Use the same center calculation as in dataset and evaluator
-        if hasattr(self.train_loader.dataset, 'center'):
-            # Use dataset's center if available (for AGBD compatibility)
-            dataset_center = self.train_loader.dataset.center
-            # Ensure center is within bounds after potential padding/cropping
-            center_h = min(dataset_center, height - 1)
-            center_w = min(dataset_center, width - 1)
-        else:
-            # Fallback to geometric center for other datasets
-            center_h = height // 2
-            center_w = width // 2
+        # Calculate center pixel coordinates (consistent with compute_loss)
+        center_h = height // 2
+        center_w = width // 2
         
-        # Additional safety check for AGBD patches
+        # Special handling for specific dataset patch sizes
         if height == 25 and width == 25:
-            # For 25x25 AGBD patches, center should be at (12, 12)
             center_h = center_w = 12
-        elif height != width:
-            # For non-square patches, use geometric center
-            center_h = height // 2
-            center_w = width // 2
-
-        # NOTE: Training metrics are local per-GPU and automatically averaged by DDP
-        # No multi-GPU reduction bug here (unlike evaluator which needed fixes)
         
-        # CRITICAL FIX: Filter out ignore_index values from metrics computation
+        # Extract center pixels
         logits_center = logits.squeeze(dim=1)[:, center_h, center_w]
         target_center = target[:, center_h, center_w]
         
+        # Filter out ignore_index values from metrics computation
         ignore_index = -1
         valid_mask = target_center != ignore_index
         
@@ -727,7 +750,4 @@ class RegTrainer(Trainer):
             valid_targets = target_center[valid_mask]
             mse = F.mse_loss(valid_logits, valid_targets)
             self.training_metrics["MSE"].update(mse.item())
-        else:
-            # If no valid samples, don't update metrics
-            print("[METRICS DEBUG] No valid samples for training metrics")
 

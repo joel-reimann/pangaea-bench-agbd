@@ -14,7 +14,12 @@ FIXES APPLIED:
 import warnings
 import numpy as np
 import torch
+
+# Set matplotlib backend BEFORE importing pyplot
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for headless environments
 import matplotlib.pyplot as plt
+
 from typing import Dict, Optional, Any
 import os
 
@@ -195,7 +200,7 @@ def log_agbd_regression_visuals(
         import wandb
         
         if wandb_run is None or not hasattr(wandb_run, 'log'):
-            print("[VIZ] No WandB logging available")
+            # print("[VIZ] No WandB logging available")
             return
             
         batch_size = pred.shape[0]
@@ -209,19 +214,19 @@ def log_agbd_regression_visuals(
             elif hasattr(dataset, '__class__'):
                 dataset_name = dataset.__class__.__name__
         
-        print(f"[VIZ] Creating AGBD patch visualizations for {samples_to_viz} samples")
+        # print(f"[VIZ] Creating AGBD patch visualizations for {samples_to_viz} samples")
         
         for i in range(samples_to_viz):
             try:
-                print(f"[VIZ] Processing sample {i+1}/{samples_to_viz}")
-                print(f"[VIZ] Original pred shape: {pred.shape}, target shape: {target.shape}")
+                # print(f"[VIZ] Processing sample {i+1}/{samples_to_viz}")
+                # print(f"[VIZ] Original pred shape: {pred.shape}, target shape: {target.shape}")
                 
                 # Extract 25x25 AGBD patches from the center of encoder outputs
                 agbd_pred = extract_agbd_patch_from_encoder_output(pred[i])
                 agbd_target = extract_agbd_patch_from_encoder_output(target[i])
                 agbd_inputs = extract_agbd_patch_from_inputs(inputs, sample_idx=i)
                 
-                print(f"[VIZ] Extracted AGBD pred shape: {agbd_pred.shape}, target shape: {agbd_target.shape}")
+                # print(f"[VIZ] Extracted AGBD pred shape: {agbd_pred.shape}, target shape: {agbd_target.shape}")
                 
                 # Calculate center pixel from AGBD patches
                 agbd_center_h = agbd_center_w = agbd_pred.shape[-1] // 2
@@ -230,7 +235,7 @@ def log_agbd_regression_visuals(
                 error = abs(pred_center - target_center)
                 rel_error = (error / (target_center + 1e-6)) * 100
                 
-                print(f"[VIZ] Center pixel - Pred: {pred_center:.2f}, GT: {target_center:.2f}, Error: {error:.2f}")
+                # print(f"[VIZ] Center pixel - Pred: {pred_center:.2f}, GT: {target_center:.2f}, Error: {error:.2f}")
                 
                 # Create visualization figure - AGBD patches only
                 fig, axes = plt.subplots(2, 3, figsize=(15, 10))
@@ -333,17 +338,17 @@ Spatial Info:
                 })
                 
                 plt.close(fig)
-                print(f"[VIZ] Successfully logged sample {i+1}")
+                # print(f"[VIZ] Successfully logged sample {i+1}")
                 
             except Exception as e:
-                print(f"[VIZ] Sample {i+1} visualization failed: {e}")
+                # print(f"[VIZ] Sample {i+1} visualization failed: {e}")
                 import traceback
                 traceback.print_exc()
                 
-        print(f"[VIZ] Completed visualization for {samples_to_viz} samples")
+        # print(f"[VIZ] Completed visualization for {samples_to_viz} samples")
         
     except Exception as e:
-        print(f"[VIZ] Visualization failed: {e}")
+        # print(f"[VIZ] Visualization failed: {e}")
         import traceback
         traceback.print_exc()
 
@@ -364,9 +369,9 @@ def validate_agbd_visualization_setup() -> bool:
         assert AGBD_CENTER_PIXEL == 12, "AGBD center pixel must be at position 12"
         assert AGBD_BIOMASS_RANGE == (0, 500), "AGBD biomass range must be 0-500 Mg/ha"
         
-        print("[AGBD-VIZ] Validation successful!")
-        print(f"[AGBD-VIZ] Patch size: {AGBD_PATCH_SIZE}x{AGBD_PATCH_SIZE}, center: ({AGBD_CENTER_PIXEL},{AGBD_CENTER_PIXEL})")
-        print(f"[AGBD-VIZ] WandB logging: {'Available' if wandb_available else 'Not available'}")
+        # print("[AGBD-VIZ] Validation successful!")
+        # print(f"[AGBD-VIZ] Patch size: {AGBD_PATCH_SIZE}x{AGBD_PATCH_SIZE}, center: ({AGBD_CENTER_PIXEL},{AGBD_CENTER_PIXEL})")
+        # print(f"[AGBD-VIZ] WandB logging: {'Available' if wandb_available else 'Not available'}")
         
         return True
         
@@ -404,10 +409,10 @@ def quick_agbd_visualization(
 
 
 # Module initialization
-print("=" * 60)
-print("AGBD VISUALIZATION MODULE LOADED")
-print("Features: 25x25 patch extraction, clean visualizations")
-print("=" * 60)
+# print("=" * 60)
+# print("AGBD VISUALIZATION MODULE LOADED")
+# print("Features: 25x25 patch extraction, clean visualizations")
+# print("=" * 60)
 
 # Validate on import
 _validation_result = validate_agbd_visualization_setup()

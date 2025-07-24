@@ -38,7 +38,7 @@ rsync -avz --progress \
     --exclude='.pytest_cache/' \
     --exclude='.coverage' \
     --exclude='htmlcov/' \
-    --exclude='20250715_*' \
+    --exclude='2025*' \
     --exclude='*.egg-info/' \
     --delete \
     "$LOCAL_PATH/" \

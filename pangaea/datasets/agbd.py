@@ -180,7 +180,7 @@ class AGBD(RawGeoFMDataset):
 
         # Aggressive debug mode: drastically reduce number of samples for fast debug runs
         if self.debug:
-            self.length = min(self.length, 512)  # Use 512 samples to allow proper batch training (512/128 = 4 batches)
+            self.length = min(self.length, 4096)  # Use 512 samples to allow proper batch training (512/128 = 4 batches)
 
         # NOTE: Don't open all file handles at once - this can cause memory issues and conflicts
         # We'll open them on-demand in __getitem__ instead
@@ -196,10 +196,10 @@ class AGBD(RawGeoFMDataset):
         
         # The dataset should always return 25x25 patches as per AGBD paper
         # PANGAEA's preprocessing pipeline will handle any size adjustments for different encoders
-        if self.img_size != 25:
-            print(f"[AGBD] INFO: img_size={self.img_size} specified for ViT alignment.")
-            print(f"[AGBD] Dataset returns 25x25 patches, preprocessing pads to {self.img_size}x{self.img_size}.")
-            print(f"[AGBD] This fixes ViT token alignment (25 % 16 != 0 causes checkerboard artifacts).")
+        # if self.img_size != 25:
+            # print(f"[AGBD] INFO: img_size={self.img_size} specified for ViT alignment.")
+            # print(f"[AGBD] Dataset returns 25x25 patches, preprocessing pads to {self.img_size}x{self.img_size}.")
+            # print(f"[AGBD] This fixes ViT token alignment (25 % 16 != 0 causes checkerboard artifacts).")
 
         # For PANGAEA compatibility: evaluator expects further attribute (see biomassters.py etc.)
         self.ignore_index = ignore_index

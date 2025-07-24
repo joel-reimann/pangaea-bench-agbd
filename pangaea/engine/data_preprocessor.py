@@ -8,8 +8,50 @@ import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 from hydra.utils import instantiate
-from .agbd_percentile_normalizer import AGBDPercentileNormalizer
 import os
+
+# AGBD-specific imports (only used when processing AGBD dataset)
+try:
+    from .agbd_percentile_normalizer import AGBDPercentileNormalizer
+    AGBD_NORMALIZER_AVAILABLE = True
+except ImportError:
+    AGBD_NORMALIZER_AVAILABLE = False
+
+
+def _is_agbd_dataset(data: dict, ignore_index: float = -1.0) -> bool:
+    """
+    Detect if the current data sample is from the AGBD dataset.
+    
+    AGBD is characterized by:
+    - Single valid pixel per patch (GEDI measurement at center)
+    - All other pixels set to ignore_index (-1.0)
+    - Target tensor shape typically 25x25 or similar small patch
+    
+    Args:
+        data: Data dictionary containing 'target' tensor
+        ignore_index: Value used for invalid pixels (default: -1.0)
+        
+    Returns:
+        bool: True if this appears to be AGBD data
+    """
+    if "target" not in data:
+        return False
+        
+    target = data["target"]
+    if not isinstance(target, torch.Tensor):
+        return False
+        
+    # Count valid pixels (not ignore_index)
+    valid_mask = target != ignore_index
+    valid_count = valid_mask.sum().item()
+    
+    # AGBD typically has exactly 1 valid pixel (the GEDI measurement)
+    # Allow small tolerance for edge cases
+    total_pixels = target.numel()
+    is_sparse = valid_count <= 3 and total_pixels >= 25  # Very sparse supervision
+    is_small_patch = target.shape[-1] <= 50 and target.shape[-2] <= 50  # Small patch size
+    
+    return is_sparse and is_small_patch
 
 
 class BasePreprocessor:
@@ -500,22 +542,19 @@ class RandomCrop(BasePreprocessor):
                 padded_img[:, :, pad_img[0] : -pad_img[0], pad_img[1] : -pad_img[1]] = v
                 data["image"][k] = padded_img
 
-            # AGBD FIX: For regression tasks, preserve single-pixel supervision during padding
-            # Check if this is AGBD data (single valid pixel surrounded by ignore_index)
-            valid_pixels = torch.sum(data["target"] != self.ignore_index)
-            
-            if valid_pixels == 1:
-                # This is likely AGBD - preserve single pixel supervision
-                print(f"[PADDING DEBUG] AGBD detected: single valid pixel, preserving during padding")
+            # Handle target padding - AGBD-specific logic for single-pixel supervision
+            if _is_agbd_dataset(data, self.ignore_index):
+                # AGBD dataset: preserve single-pixel supervision during padding
+                # Only the center pixel contains GEDI biomass measurement, pad with ignore_index
                 padding = (pad_img[1], pad_img[0], pad_img[1], pad_img[0])
                 data["target"] = TF.pad(
                     data["target"],
                     padding=padding,
-                    fill=self.ignore_index,  # Pad with ignore_index to maintain single-pixel supervision
+                    fill=self.ignore_index,
                     padding_mode="constant",
                 )
             else:
-                # For other regression tasks, use center pixel value for padding
+                # Other regression tasks: use center pixel value for padding
                 padding = (pad_img[1], pad_img[0], pad_img[1], pad_img[0])
                 center_y, center_x = data["target"].shape[0] // 2, data["target"].shape[1] // 2
                 center_value = data["target"][center_y, center_x].item()
@@ -1094,35 +1133,48 @@ def _setup_size(size, error_msg):
 
 
 class AGBDCenterCropToEncoder(RandomCrop):
+    """
+    AGBD-specific center cropping that preserves GEDI measurement pixel alignment.
+    
+    This preprocessor is designed specifically for the Above-Ground Biomass Dataset (AGBD)
+    which uses sparse single-pixel supervision from GEDI LiDAR measurements. Unlike random
+    cropping, this ensures the GEDI measurement pixel remains centered in the crop region,
+    maintaining spatial alignment critical for biomass prediction accuracy.
+    
+    Key Features:
+    - Locates the single valid pixel (GEDI measurement) in the target tensor
+    - Centers the crop window around this pixel
+    - Preserves spatial relationships between satellite imagery and ground truth
+    - Prevents random placement that could misalign GEDI footprints
+    
+    Usage:
+        This class should only be used with AGBD dataset preprocessing. For other datasets,
+        use the standard RandomCrop or FocusRandomCropToEncoder.
+        
+    Args:
+        pad_if_needed (bool): Whether to pad if crop size exceeds image size
+        **meta: Metadata including encoder_input_size, data_mean, ignore_index
+    """
+    
     def __init__(self, pad_if_needed: bool = False, **meta) -> None:
-        """Initialize the AGBDCenterCropToEncoder preprocessor.
-        
-        This class is specifically designed for AGBD to ensure the GEDI measurement
-        pixel is always centered in the cropped region, preserving spatial alignment.
-        
-        Args:
-            pad_if_needed (bool, optional): whether to pad. Defaults to False.
-            meta: statistics/info of the input data and target encoder
-                encoder_input_size: required encoder input size
-                data_mean: global mean value of incoming data for potential padding
-                ignore_index: ignore index for potential padding
-        """
         size = meta["encoder_input_size"]
         super().__init__(size, pad_if_needed, **meta)
-        print(f"[AGBD CENTERCROP] Initialized with encoder_input_size: {size}")
 
     def get_params(self, data: dict) -> Tuple[int, int, int, int]:
-        """Get parameters for center crop around GEDI measurement pixel.
+        """
+        Calculate crop parameters to center the GEDI measurement pixel.
 
         Args:
-            data (dict): input data with 'target' containing GEDI measurement.
+            data: Data dictionary containing 'target' tensor with GEDI measurement
+            
         Returns:
-            tuple: params (i, j, h, w) to be passed to ``crop`` for center crop.
+            Tuple of (top, left, height, width) for crop operation
+            
+        Raises:
+            ValueError: If required crop size exceeds input dimensions
         """
         h, w = data["target"].shape
         th, tw = self.size
-
-        print(f"[AGBD CENTERCROP] Target shape: {(h, w)}, Crop size: {(th, tw)}")
 
         if h < th or w < tw:
             raise ValueError(
@@ -1130,56 +1182,35 @@ class AGBDCenterCropToEncoder(RandomCrop):
             )
 
         if w == tw and h == th:
-            print(f"[AGBD CENTERCROP] No cropping needed - shapes match")
             return 0, 0, h, w
 
-        # Find the GEDI measurement pixel (should be exactly one valid pixel)
-        valid_map = data["target"] != self.ignore_index
-        valid_pixels = torch.nonzero(valid_map)
-        
-        print(f"[AGBD CENTERCROP] Valid pixels found: {len(valid_pixels)}")
+        # Locate GEDI measurement pixel (single valid pixel in AGBD)
+        valid_mask = data["target"] != self.ignore_index
+        valid_pixels = torch.nonzero(valid_mask)
         
         if len(valid_pixels) == 0:
             # Fallback: use geometric center if no valid pixels found
-            print(f"[AGBD CENTERCROP] WARNING: No valid pixels found, using geometric center")
             gedi_y, gedi_x = h // 2, w // 2
         elif len(valid_pixels) == 1:
             # Expected case: exactly one GEDI measurement pixel
             gedi_y, gedi_x = valid_pixels[0][0].item(), valid_pixels[0][1].item()
-            print(f"[AGBD CENTERCROP] GEDI pixel found at: ({gedi_y}, {gedi_x})")
         else:
             # Multiple valid pixels: use the center-most one
-            print(f"[AGBD CENTERCROP] WARNING: {len(valid_pixels)} valid pixels found, expected 1")
             center_y, center_x = h // 2, w // 2
             distances = torch.sum((valid_pixels.float() - torch.tensor([center_y, center_x]).float()) ** 2, dim=1)
             closest_idx = torch.argmin(distances)
             gedi_y, gedi_x = valid_pixels[closest_idx][0].item(), valid_pixels[closest_idx][1].item()
-            print(f"[AGBD CENTERCROP] Using center-most valid pixel: ({gedi_y}, {gedi_x})")
 
-        # Center the crop on the GEDI pixel
-        # Calculate crop window to center on GEDI measurement
+        # Calculate crop window centered on GEDI pixel
         center_offset_h = th // 2
         center_offset_w = tw // 2
         
-        # Ideal crop position (may go outside bounds)
+        # Calculate and clamp crop position
         ideal_i = gedi_y - center_offset_h
         ideal_j = gedi_x - center_offset_w
         
-        # Clamp to valid bounds
         i = max(0, min(ideal_i, h - th))
         j = max(0, min(ideal_j, w - tw))
         
-        print(f"[AGBD CENTERCROP] Crop window: i={i}, j={j} (top-left corner)")
-        print(f"[AGBD CENTERCROP] GEDI pixel will be at: ({gedi_y-i}, {gedi_x-j}) in cropped space")
-        
-        # Verify the GEDI pixel will be in reasonable position in cropped space
-        final_gedi_y = gedi_y - i
-        final_gedi_x = gedi_x - j
-        
-        if not (0 <= final_gedi_y < th and 0 <= final_gedi_x < tw):
-            print(f"[AGBD CENTERCROP] ERROR: GEDI pixel outside crop bounds!")
-        elif abs(final_gedi_y - th//2) > 5 or abs(final_gedi_x - tw//2) > 5:
-            print(f"[AGBD CENTERCROP] WARNING: GEDI pixel not well-centered. Expected: ({th//2}, {tw//2}), Got: ({final_gedi_y}, {final_gedi_x})")
-
         return i, j, th, tw
 

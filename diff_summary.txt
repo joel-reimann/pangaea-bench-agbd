@@ -1,0 +1,60 @@
+Only in .: agbd_token_masking_solution.py
+Only in .: agbd_visualization_clean.py
+Only in .: agbd_visualization_fixed.py
+Only in .: agbd_visualization_new.py
+Only in .: agbd_visualization.py
+Only in .: agbd_visualization_ultra_clean.py
+Only in .: agbd_visualizer_unified.py
+Only in .: analyze_center_pixel_precision.py
+Only in .: bulletproof_agbd_validation.py
+Only in .: comprehensive_agbd_analysis.py
+Only in .: comprehensive_agbd_pipeline_audit.py
+Only in .: comprehensive_agbd_test.py
+Only in ./configs: agbd_consolidated.yaml
+Only in ./configs: central_pixel_scaling.yaml
+Only in ./configs/dataset: agbd.yaml
+Files ./configs/dataset/biomassters.yaml and ../pangaea-bench/configs/dataset/biomassters.yaml differ
+Files ./configs/dataset/opencanopy.yaml and ../pangaea-bench/configs/dataset/opencanopy.yaml differ
+Only in ./configs/encoder: galileo.yaml
+Only in ./configs/encoder: satmae_base.yaml
+Only in ./configs/preprocessing: reg_agbd_original.yaml
+Only in ./configs/preprocessing: reg_agbd_padding.yaml
+Only in ./configs/preprocessing: reg_agbd_percentile.yaml
+Files ./configs/task/regression.yaml and ../pangaea-bench/configs/task/regression.yaml differ
+Only in ./configs: train_agbd.yaml
+Only in .: debug_agbd_loss.py
+Only in .: debug_agbd_pipeline.py
+Only in .: debug_batch_size_issue.py
+Only in .: debug_center_pixel_issue.py
+Only in .: debug_tensor_shapes.py
+Only in .: enhanced_agbd_visualizer.py
+Only in .: investigate_alignment.py
+Only in .: investigate_data_ranges_corrected.py
+Only in .: investigate_data_ranges.py
+Only in .: investigate_real_alignment.py
+Only in ./pangaea/datasets: agbd.py
+Files ./pangaea/datasets/biomassters.py and ../pangaea-bench/pangaea/datasets/biomassters.py differ
+Files ./pangaea/datasets/opencanopy.py and ../pangaea-bench/pangaea/datasets/opencanopy.py differ
+Files ./pangaea/decoders/upernet.py and ../pangaea-bench/pangaea/decoders/upernet.py differ
+Files ./pangaea/encoders/dofa_encoder.py and ../pangaea-bench/pangaea/encoders/dofa_encoder.py differ
+Only in ./pangaea/encoders: galileo_encoder.py
+Only in ./pangaea/encoders: satmae_base_encoder.py
+Files ./pangaea/encoders/spectralgpt_encoder.py and ../pangaea-bench/pangaea/encoders/spectralgpt_encoder.py differ
+Files ./pangaea/encoders/unet_encoder.py and ../pangaea-bench/pangaea/encoders/unet_encoder.py differ
+Files ./pangaea/encoders/vit_encoder.py and ../pangaea-bench/pangaea/encoders/vit_encoder.py differ
+Only in ./pangaea/engine: agbd_percentile_normalizer.py
+Files ./pangaea/engine/data_preprocessor.py and ../pangaea-bench/pangaea/engine/data_preprocessor.py differ
+Files ./pangaea/engine/evaluator.py and ../pangaea-bench/pangaea/engine/evaluator.py differ
+Files ./pangaea/engine/trainer.py and ../pangaea-bench/pangaea/engine/trainer.py differ
+Files ./pangaea/run.py and ../pangaea-bench/pangaea/run.py differ
+Files ./pangaea/utils/logger.py and ../pangaea-bench/pangaea/utils/logger.py differ
+Only in .: test_agbd_fixes.py
+Only in .: test_alignment_final.py
+Only in .: test_alignment_fix.py
+Only in .: test_complete_agbd_pipeline.py
+Only in .: test_normalization_fix.py
+Only in .: test_normalization_pipeline.py
+Only in .: test_padding_behavior.py
+Only in .: test_patch_alignment.py
+Only in .: test_percentile_normalizer.py
+Only in .: verify_agbd_integration.py

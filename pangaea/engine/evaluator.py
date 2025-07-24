@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 import math
@@ -17,8 +18,45 @@ from torch.utils.data import DataLoader
 from pangaea.decoders.knnclassifier import KNNClassifier
 from tqdm import tqdm
 
-# AGBD-specific visualization import - required for regression plotting
-from agbd_visualization_new import log_agbd_regression_visuals
+# AGBD-specific visualization imports (only loaded when processing AGBD)
+try:
+    from agbd_visualization_new import log_agbd_regression_visuals
+    AGBD_VISUALIZERS_AVAILABLE = True
+except ImportError:
+    AGBD_VISUALIZERS_AVAILABLE = None
+
+
+def _is_agbd_evaluation(dataset, target_tensor) -> bool:
+    """
+    Detect if we're evaluating AGBD dataset based on dataset characteristics.
+    
+    Args:
+        dataset: Dataset object
+        target_tensor: Target tensor to examine
+        
+    Returns:
+        bool: True if this appears to be AGBD evaluation
+    """
+    # Check dataset name/path for AGBD indicators
+    if hasattr(dataset, 'dataset_name') and 'agbd' in str(dataset.dataset_name).lower():
+        return True
+    if hasattr(dataset, 'data_root') and 'agbd' in str(dataset.data_root).lower():
+        return True
+        
+    # Check for AGBD characteristics: sparse supervision with small patches
+    if target_tensor is not None:
+        valid_mask = target_tensor != -1.0  # Common ignore_index
+        valid_ratio = valid_mask.float().mean().item()
+        
+        # AGBD typically has very sparse supervision (< 0.1% valid pixels)
+        is_very_sparse = valid_ratio < 0.001
+        
+        # Small patch size typical of AGBD
+        is_small_patch = target_tensor.shape[-1] <= 50 and target_tensor.shape[-2] <= 50
+        
+        return is_very_sparse and is_small_patch
+    
+    return False
 
 
 
@@ -693,7 +731,7 @@ class RegEvaluator(Evaluator):
                 central_targets = central_targets[valid_mask]
                 batch_size = central_logits.shape[0]
                 
-                print(f"[DEBUG] Batch {batch_idx}: {valid_mask.sum().item()}/{len(valid_mask)} valid samples (ignore_index={self.ignore_index})")
+                # print(f"[DEBUG] Batch {batch_idx}: {valid_mask.sum().item()}/{len(valid_mask)} valid samples (ignore_index={self.ignore_index})")
             else:
                 batch_size = central_logits.shape[0]
             
@@ -727,28 +765,36 @@ class RegEvaluator(Evaluator):
             # Note: Advanced AGBD visualization handles all visualization needs
             # The comprehensive visualization above replaces the basic approach below
             
-            # ------------------------------ ADVANCED VISUALIZATION (AGBD) ------------------------------
-            # Enhanced AGBD visualization with proper biomass units and multi-modal displays
-            # Addresses meeting requirements for better visualizations logged to WandB
-            if self.use_wandb and self.rank == 0 and ((batch_idx % self.visualization_interval == 0) or (model_name in ["epoch 0", "epoch 10", "checkpoint__best"])):
+            # ------------------------------ AGBD-SPECIFIC VISUALIZATION ------------------------------
+            # Enhanced visualization for AGBD biomass prediction analysis
+            # Only activated when processing AGBD dataset
+            is_agbd = _is_agbd_evaluation(self.val_loader.dataset, target)
+            
+            if (is_agbd and self.use_wandb and self.rank == 0 and 
+                ((batch_idx % self.visualization_interval == 0) or (model_name in ["epoch 0", "epoch 10", "checkpoint__best"]))):
                 try:
-                    # Create central pixel coordinates list for batch - WARNING: these may not be accurate after random cropping!
-                    batch_size = logits.shape[0]
-                    # Use new comprehensive AGBD visualization utility
-                    log_agbd_regression_visuals(
-                        inputs=data,  # Pass full data dictionary with image bands
-                        pred=logits,  # Predicted biomass maps
-                        target=target,  # Ground truth biomass maps
-                        band_order=getattr(self.val_loader.dataset, 'band_order', None),
-                        wandb_run=wandb,
-                        step=None,  # Don't use step for visualizations - let WandB auto-increment
-                        prefix=self.split,
-                        max_samples=1,  # Reduce to 1 sample per batch to minimize logging
-                        dataset=self.val_loader.dataset,
-                        model_name=model_name  # Pass model name for visualization title
-                    )
+                    if AGBD_VISUALIZERS_AVAILABLE:
+                        # Use the proven working visualization from agbd_visualization_new.py
+                        log_agbd_regression_visuals(
+                            inputs=data,
+                            pred=logits,
+                            target=target,
+                            band_order=getattr(self.val_loader.dataset, 'band_order', None),
+                            wandb_run=wandb,
+                            step=batch_idx,
+                            prefix=self.split,
+                            max_samples=2,
+                            dataset=self.val_loader.dataset,
+                            model_name=model_name
+                        )
+                        
+                        # print(f"✅ AGBD visualization completed for batch {batch_idx}")
+                        
+                    else:
+                        print(f"⚠️  AGBD visualizers not available - check imports")
+                        
                 except Exception as e:
-                    print(f"[WARN] Advanced AGBD visualization failed for batch {batch_idx}: {e}")
+                    print(f"[WARN] AGBD visualization failed for batch {batch_idx}: {e}")
                     import traceback
                     traceback.print_exc()
                     # Fallback to basic visualization

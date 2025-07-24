@@ -11,7 +11,7 @@ set -euo pipefail
 
 # Full model list (uncomment after alignment is validated)
 MODELS=(
-  satmae_base scalemae prithvi dofa gfmswin remoteclip spectralgpt satlasnet_mi satlasnet_si galileo
+  prithvi satmae_base scalemae dofa gfmswin remoteclip spectralgpt satlasnet_mi satlasnet_si galileo
   ssl4eo_mae_optical ssl4eo_mae_sar ssl4eo_data2vec ssl4eo_dino ssl4eo_moco
   croma_joint croma_optical croma_sar
   resnet50_pretrained resnet50_scratch vit vit_mi vit_scratch unet_encoder unet_encoder_mi
@@ -57,8 +57,8 @@ for ENCODER in "${MODELS[@]}"; do
     decoder=reg_upernet \
     criterion=mse \
     task=regression \
-    dataset.debug=True \
-    task.trainer.n_epochs=3 \
+    dataset.debug=False \
+    task.trainer.n_epochs=20 \
     task.evaluator.inference_mode=whole \
     task.trainer.ckpt_interval=1 \
     task.trainer.eval_interval=1 \

@@ -21,7 +21,10 @@ chunk_size: 1  # AGBD is patch-based
 years: [2019, 2020]
 
 # CRITICAL FIX: Pad 25x25 to 32x32 for ViT token alignment 
-# (25 % 16 != 0 causes checkerboard artifacts)
+# MEETING NOTES: "EACH TOKEN GETS 24 X24 PIXEL THINGY our patch is 25 x 25"
+# REALITY: Most ViTs use 16x16 patches, not 24x24!
+# SOLUTION: 32x32 ensures perfect alignment (32÷16=2, 32÷8=4)
+# CENTER PRESERVATION: (12,12) → (15,15) after padding
 img_size: 32
 multi_temporal: false  # AGBD is not multi-temporal
 multi_modal: true      # S2 optical + SAR bands

@@ -621,6 +621,7 @@ AGBD 25x25 Patch Statistics:
   - Valid Pixels: {np.sum(gt_patch != -1)}/625
   - GT Range: [{gt_patch.min():.1f}, {gt_patch.max():.1f}] Mg/ha
   - Pred Range: [{pred_patch.min():.1f}, {pred_patch.max():.1f}] Mg/ha
+"""
                 axes[1, 2].text(0.02, 0.98, stats_text, transform=axes[1, 2].transAxes, 
                                fontsize=10, verticalalignment='top', fontfamily='monospace',
                                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightblue", alpha=0.8))

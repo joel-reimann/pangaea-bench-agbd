@@ -10,6 +10,16 @@ sys.path.append('/scratch/final2/pangaea-bench-agbd')
 import torch
 import numpy as np
 
+# Import our visualizers
+try:
+    from enhanced_agbd_visualizer import AGBDVisualizer
+    from agbd_visualization_ultra_clean import CleanAGBDVisualizer
+    print("✅ Visualization modules loaded successfully")
+    VISUALIZERS_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Could not load visualizers: {e}")
+    VISUALIZERS_AVAILABLE = False
+
 def test_current_alignment_issue():
     """Demonstrate the current ViT alignment problem"""
     
