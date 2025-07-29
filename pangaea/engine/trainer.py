@@ -658,12 +658,12 @@ class RegTrainer(Trainer):
         return encoder_output
 
     def compute_loss(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """Compute regression loss with ignore_index handling and center pixel extraction.
-
+        """Compute the loss with automatic spatial size handling.
+    
         Args:
             logits (torch.Tensor): logits from the decoder.
             target (torch.Tensor): target tensor.
-
+    
         Returns:
             torch.Tensor: loss value.
         """
@@ -671,19 +671,28 @@ class RegTrainer(Trainer):
         logits_height, logits_width = logits.shape[-2:]
         target_height, target_width = target.shape[-2:]
         
-        # AGBD-AWARE CENTER PIXEL EXTRACTION
-        # For AGBD: Extract center pixel from logits, find GEDI pixel in target
-        ignore_index = -1
+        # If spatial sizes don't match, resize target to match logits
+        if (logits_height, logits_width) != (target_height, target_width):
+            target = F.interpolate(
+                target.unsqueeze(1).float(),  # Add channel dim for interpolation
+                size=(logits_height, logits_width),
+                mode='nearest'  # Use nearest for discrete values
+            ).squeeze(1)  # Remove channel dim
         
-        # Extract center pixel from logits (assume GEDI pixel is centered after preprocessing)
+        # Calculate center pixel coordinates
         center_h = logits_height // 2
         center_w = logits_width // 2
-        logits_center = logits.squeeze(dim=1)[:, center_h, center_w]
         
-        # For AGBD targets: Find the single valid (GEDI) pixel
-        valid_mask = target != ignore_index
-        batch_size = target.shape[0]
-        target_center = torch.full((batch_size,), float(ignore_index), device=target.device)
+        # Extract center pixels for point supervision
+        logits_center = logits.squeeze(dim=1)[:, center_h, center_w]
+        target_center = target[:, center_h, center_w]
+
+    # Extra safety check from the image
+    assert torch.min(target_center) > 0, "Target center pixel should be > 0"
+
+    # Compute loss on center pixels only
+    return self.criterion(logits_center, target_center)
+
         
         for i in range(batch_size):
             sample_valid_mask = valid_mask[i]
