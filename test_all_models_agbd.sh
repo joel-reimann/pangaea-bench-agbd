@@ -2,25 +2,25 @@
 set -euo pipefail
 
 # ALIGNMENT FIX TEST: Start with just ViT-based models to validate alignment fix
-MODELS=(
-  satmae_base
+# MODELS=(
+  # satmae_base
   # ssl4eo_mae_optical  # Add more after first test succeeds
   # scalemae
   # prithvi
-)
+# )
 
 # Full model list (uncomment after alignment is validated)
-# MODELS=(
-#   satmae_base scalemae prithvi dofa gfmswin remoteclip spectralgpt satlasnet_mi satlasnet_si galileo
-#   ssl4eo_mae_optical ssl4eo_mae_sar ssl4eo_data2vec ssl4eo_dino ssl4eo_moco
-#   croma_joint croma_optical croma_sar
-#   resnet50_pretrained resnet50_scratch vit vit_mi vit_scratch unet_encoder unet_encoder_mi
-# )
+MODELS=(
+  satmae_base scalemae prithvi dofa gfmswin remoteclip spectralgpt satlasnet_mi satlasnet_si galileo
+  ssl4eo_mae_optical ssl4eo_mae_sar ssl4eo_data2vec ssl4eo_dino ssl4eo_moco
+  croma_joint croma_optical croma_sar
+  resnet50_pretrained resnet50_scratch vit vit_mi vit_scratch unet_encoder unet_encoder_mi
+)
 
 
 
 # Download GFMSwin weights if missing (for debug/fix loop)
-PANGAEA_HOME="/scratch/final2/pangaea-bench-agbd"
+PANGAEA_HOME="/scratch/final3/pangaea-bench-agbd"
 PRETRAINED_DIR="$PANGAEA_HOME/pretrained_models"
 # GFMSWIN_WEIGHTS="$PRETRAINED_DIR/gfm.pth"
 # Check if file exists and is at least 1MB (valid)

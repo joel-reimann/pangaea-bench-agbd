@@ -180,7 +180,7 @@ class AGBD(RawGeoFMDataset):
 
         # Aggressive debug mode: drastically reduce number of samples for fast debug runs
         if self.debug:
-            self.length = min(self.length, 16)  # Use only 16 samples for both train and val
+            self.length = min(self.length, 512)  # Use only 16 samples for both train and val
 
         # NOTE: Don't open all file handles at once - this can cause memory issues and conflicts
         # We'll open them on-demand in __getitem__ instead
@@ -367,18 +367,18 @@ class AGBD(RawGeoFMDataset):
         # It computes loss using center pixel: logits[:,pxl,pxl] vs target[:,pxl,pxl]
         # Create 25x25 patch tensor with AGBD value - center pixel will be used for loss
         target = torch.full((25, 25), float(agbd), dtype=torch.float32)
-        print(f"[AGBD DEBUG] Created target tensor shape: {target.shape}")
-        print(f"[AGBD DEBUG] Target tensor center value: {target[12, 12].item()}")
-        print(f"[AGBD DEBUG] AGBD biomass value: {agbd.item():.2f} Mg/ha")
+        # print(f"[AGBD DEBUG] Created target tensor shape: {target.shape}")
+        # print(f"[AGBD DEBUG] Target tensor center value: {target[12, 12].item()}")
+        # print(f"[AGBD DEBUG] AGBD biomass value: {agbd.item():.2f} Mg/ha")
         
         # define image and target as PANGAEA expects it (images' shape =  C T H W)
         image = {}
         
         if "optical" in self.bands.keys() and s2_bands is not None:
             image['optical'] = torch.from_numpy(s2_bands).permute(2, 0, 1).unsqueeze(1).float()
-            print(f"[AGBD DEBUG] Optical tensor shape: {image['optical'].shape}")
-            print(f"[AGBD DEBUG] Expected: (C=12, T=1, H=25, W=25)")
-            print(f"[AGBD DEBUG] Optical tensor range: [{image['optical'].min().item():.6f}, {image['optical'].max().item():.6f}]")
+            # print(f"[AGBD DEBUG] Optical tensor shape: {image['optical'].shape}")
+            # print(f"[AGBD DEBUG] Expected: (C=12, T=1, H=25, W=25)")
+            # print(f"[AGBD DEBUG] Optical tensor range: [{image['optical'].min().item():.6f}, {image['optical'].max().item():.6f}]")
             # print(f"[AGBD DEBUG] Optical tensor shape: {image['optical'].shape}")
             # print(f"[AGBD DEBUG] Optical tensor range: [{image['optical'].min().item():.6f}, {image['optical'].max().item():.6f}]")
         

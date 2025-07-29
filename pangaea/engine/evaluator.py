@@ -490,7 +490,7 @@ class RegEvaluator(Evaluator):
                 central_targets = central_targets[valid_mask]
                 batch_size = central_logits.shape[0]
                 
-                print(f"[DEBUG] Batch {batch_idx}: {valid_mask.sum().item()}/{len(valid_mask)} valid samples (ignore_index={self.ignore_index})")
+                # print(f"[DEBUG] Batch {batch_idx}: {valid_mask.sum().item()}/{len(valid_mask)} valid samples (ignore_index={self.ignore_index})")
             else:
                 batch_size = central_logits.shape[0]
             
