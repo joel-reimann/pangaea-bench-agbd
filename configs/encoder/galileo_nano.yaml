@@ -1,0 +1,21 @@
+# Galileo nano model configuration
+_target_: pangaea.encoders.galileo_encoder.GalileoEncoderWrapper
+
+encoder_weights: ./pretrained_models/galileo_nano/encoder.pt
+
+input_size: 64  
+input_bands:
+  optical: [B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12]  # All S2 bands Galileo supports
+  sar: [VV, VH]  # S1 bands Galileo supports
+
+output_layers: [0, 1, 2, 3]  # Which encoder layers to output
+
+# Galileo-specific parameters
+patch_size: 4
+month: 6  # Default month (can be changed per sample)
+do_pool: true
+add_layernorm_on_exit: true
+
+# Model variant selection
+model_identifier: nano  # Options: nano, tiny, base
+download_url: https://huggingface.co/nasaharvest/galileo
