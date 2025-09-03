@@ -1,21 +1,18 @@
-# Galileo base model configuration
 _target_: pangaea.encoders.galileo_encoder.GalileoEncoderWrapper
 
 encoder_weights: ./pretrained_models/galileo_base/encoder.pt
 
-input_size: 64  
+input_size: 64
 input_bands:
-  optical: [B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12]  # All S2 bands Galileo supports
-  sar: [VV, VH]  # S1 bands Galileo supports
+  optical: [B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12]
+  sar: [VV, VH]
 
-output_layers: [0, 1, 2, 3]  # Which encoder layers to output
+output_layers: [0, 1, 2, 3]
 
-# Galileo-specific parameters
 patch_size: 4
-month: 6  # Default month (can be changed per sample)
+month: 6
 do_pool: true
 add_layernorm_on_exit: true
 
-# Model variant selection
-model_identifier: base  # Options: nano, tiny, base
+model_identifier: base
 download_url: https://huggingface.co/nasaharvest/galileo

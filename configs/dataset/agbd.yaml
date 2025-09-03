@@ -1,24 +1,20 @@
 _target_: pangaea.datasets.agbd.AGBD
 dataset_name: AGBD
-
 root_path: ./data/agbd
 hdf5_dir: ./data/agbd
 mapping_path: ./data/agbd
 norm_path: ./data/agbd
-
 version: 4
 years: [2019, 2020]
 
 download_url:
 auto_download: False
-
 split: null
 chunk_size: 1
 img_size: 25
 multi_temporal: false
 multi_modal: true
 debug: false
-
 ignore_index: -1
 num_classes: 1
 classes:
@@ -28,8 +24,7 @@ distribution:
 
 bands:
   optical: [B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12]
-  sar: [VV, VH]
-
+  sar: [HH, HV]
 data_mean:
   optical:
     [

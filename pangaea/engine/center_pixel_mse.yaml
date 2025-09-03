@@ -1,9 +1,0 @@
-_target_: pangaea.engine.center_pixel_mse.CenterPixelMSE
-###############################################################################
-# Custom criterion for AGBD regression
-#
-# This configuration registers the Centre‑Pixel MSE loss with Hydra.  It
-# points to the ``CenterPixelMSE`` class defined in
-# ``pangaea/engine/center_pixel_mse.py``.  Use this criterion when
-# training on the AGBD dataset so that only the centre pixel of each
-# patch contributes to the loss.

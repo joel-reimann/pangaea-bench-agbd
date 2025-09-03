@@ -1,0 +1,4 @@
+_target_: pangaea.engine.gaussian_weighted_mse.GaussianWeightedMSE
+
+size: 224      # The resolution of your model's output map
+sigma: 28.0    # A starting value for the Gaussian's standard deviation (e.g., size / 8)
